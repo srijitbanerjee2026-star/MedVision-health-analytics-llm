@@ -10,11 +10,10 @@ import re
 MODEL_FILE = "severity_model.json"
 SQL_FILE = "medvision_full.sql"
 
-# Update with your local MySQL credentials
 MYSQL_CONFIG = {
     "host": "localhost",
     "user": "root",
-    "password": "user67"  # Replace with your MySQL password or "" if no password
+    "password": "user67"  
 }
 
 def seed_database_from_sql():
@@ -33,14 +32,13 @@ def seed_database_from_sql():
     with open(SQL_FILE, "r", encoding="utf-8") as f:
         sql_content = f.read()
 
-    # Split SQL dump by semicolon to execute individual statements
+    
     statements = [stmt.strip() for stmt in sql_content.split(";") if stmt.strip()]
 
     for stmt in statements:
         try:
             cursor.execute(stmt)
         except mysql.connector.Error as err:
-            # Ignore warnings if database or table already exists
             if err.errno not in (1007, 1050):
                 print(f"[WARN] Statement execution notice: {err}")
 
