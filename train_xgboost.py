@@ -86,7 +86,10 @@ def load_data_from_mysql():
         ]
         
         X_list.append(feature_vector)
-        y_list.append(int(row['target_triage_acuity']))
+        raw_acuity = int(row['target_triage_acuity'])
+        inverted_acuity = 6 - raw_acuity
+
+        y_list.append(inverted_acuity)
 
     X = np.array(X_list, dtype=np.float32)
     y_raw = np.array(y_list, dtype=np.int32)
