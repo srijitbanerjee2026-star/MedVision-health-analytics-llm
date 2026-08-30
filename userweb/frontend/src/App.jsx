@@ -92,17 +92,17 @@ const BANNER_BY_SEVERITY = {
 function vitalNarrative(kind, value) {
   switch (kind) {
     case "spo2":
-      return value < 95
-        ? { alert: true, text: "Low — should be 95% or higher" }
-        : { alert: false, text: "Normal — 95% or higher is healthy" };
+      return value < 92
+        ? { alert: true, text: "Low — should be 92% or higher" }
+        : { alert: false, text: "Normal — 92% or higher is healthy" };
     case "heart_rate":
       if (value < 60) return { alert: true, text: "Slow — usual range is 60 to 100" };
       if (value > 100) return { alert: true, text: "Fast — usual range is 60 to 100" };
       return { alert: false, text: "Normal — usual range is 60 to 100" };
     case "systolic_bp":
-      return value >= 130
-        ? { alert: true, text: "High — should be under 120" }
-        : { alert: false, text: "Normal — under 120 is healthy" };
+      if (value < 90) return { alert: true, text: "Low — should be 90 or higher" };
+      if (value > 130) return { alert: true, text: "High — should be 130 or under" };
+      return { alert: false, text: "Normal — 90 to 130 is healthy" };
     default:
       return { alert: false, text: "" };
   }
@@ -170,19 +170,21 @@ export default function App() {
         </button>
       </div>
 
+      <div className="mvg-tab-panel" style={{ display: tab === "criticality" ? undefined : "none" }}>
+        <TriageForm
+          onAnalyzed={(data) => {
+            setResult(data);
+            setAnalyzedAt(new Date());
+          }}
+          onReset={() => {
+            setResult(null);
+            setAnalyzedAt(null);
+          }}
+        />
+      </div>
+
       {tab === "criticality" && (
         <div className="mvg-tab-panel">
-          <TriageForm
-            onAnalyzed={(data) => {
-              setResult(data);
-              setAnalyzedAt(new Date());
-            }}
-            onReset={() => {
-              setResult(null);
-              setAnalyzedAt(null);
-            }}
-          />
-
           {!result && (
             <div className="mvg-card mvg-placeholder">
               Enter a patient's vitals above and click "Analyze vitals" to run triage analysis.
