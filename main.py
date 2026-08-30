@@ -639,6 +639,16 @@ def analyze_vitals(vitals: VitalsInput):
     risk = score_patient_risk(vitals)
     severity_ml = score_severity_ml(vitals)
 
+    findings_text = vitals.findings.strip()
+    nlp_diagnosis = None
+    if findings_text:
+        condition, confidence, subsystem = engine.predict_nlp_disease(findings_text)
+        nlp_diagnosis = {
+            "predicted_condition": condition,
+            "confidence": confidence,
+            "subsystem": subsystem,
+        }
+
     return {
         "status": "success",
         "parsed_vitals": {
@@ -662,6 +672,7 @@ def analyze_vitals(vitals: VitalsInput):
         "disease_probabilities": disease_probabilities,
         "risk_assessment": risk,
         "severity_assessment_ml": severity_ml,
+        "nlp_diagnosis": nlp_diagnosis,
     }
 
 

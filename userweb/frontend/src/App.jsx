@@ -50,22 +50,6 @@ function SeverityRing({ level, color, size = 110 }) {
   );
 }
 
-const DISEASE_INFO = {
-  Normal: "No signs of infection or organ strain in these vitals.",
-  "Respiratory Infection": "An infection in the lungs. Usually treated with oxygen and antibiotics, often in hospital.",
-  "Cardiac Event": "A possible strain on the heart. May need urgent monitoring and cardiac tests.",
-  Sepsis: "A body-wide reaction to infection that can escalate quickly and needs urgent treatment.",
-  "Hypertensive Crisis": "Blood pressure high enough to risk organ damage if not treated quickly.",
-};
-
-const SCAN_HEADLINE = {
-  Normal: "Your vitals are within the range we'd expect for someone without acute illness.",
-  "Respiratory Infection": "Your oxygen level and breathing-related vitals point to a possible lung infection.",
-  "Cardiac Event": "Your heart rate and blood pressure pattern suggest possible strain on your heart.",
-  Sepsis: "Your vitals show a pattern sometimes seen with a body-wide infection response.",
-  "Hypertensive Crisis": "Your blood pressure is high enough to need prompt evaluation.",
-};
-
 const BANNER_BY_SEVERITY = {
   5: {
     title: "Your results need urgent attention",
@@ -127,11 +111,9 @@ export default function App() {
   const vitals = result?.parsed_vitals;
   const severityLevel = result?.triage_severity_level ?? null;
   const [severityLabel, severityColor] = SEVERITY_MAP[severityLevel] || ["Unknown", "#888"];
-  const diseaseProbabilities = result?.disease_probabilities || {};
-  const rankedDiseases = Object.entries(diseaseProbabilities).sort((a, b) => b[1] - a[1]);
-  const topDisease = rankedDiseases[0]?.[0];
   const risk = result?.risk_assessment;
   const riskColor = risk && risk.risk_score >= 70 ? "#ff3b30" : risk && risk.risk_score >= 40 ? "#b8bec7" : "#8a92a0";
+  const nlpDiagnosis = result?.nlp_diagnosis;
 
   return (
     <div className="mvg-app">
@@ -253,7 +235,6 @@ export default function App() {
             const spo2Info = vitalNarrative("spo2", vitals.spo2);
             const hrInfo = vitalNarrative("heart_rate", vitals.heart_rate);
             const sbpInfo = vitalNarrative("systolic_bp", vitals.systolic_bp);
-            const scanHeadline = SCAN_HEADLINE[topDisease] || "We could not determine a clear pattern from these vitals.";
 
             return (
               <div className="mvg-tab-panel">
@@ -281,55 +262,27 @@ export default function App() {
 
                 <div className="mvg-card mvg-diagnosis-hero">
                   <div className="mvg-card-label">Predicted Diagnosis</div>
-                  <div className="mvg-hero-disease" style={{ color: severityColor }}>
-                    {topDisease || "—"}
-                  </div>
-                  <div className="mvg-hero-confidence">
-                    {((rankedDiseases[0]?.[1] || 0) * 100).toFixed(1)}% model confidence
-                  </div>
-                  <p className="mvg-plain-text">{scanHeadline}</p>
+                  {nlpDiagnosis ? (
+                    <>
+                      <div className="mvg-hero-disease" style={{ color: severityColor }}>
+                        {nlpDiagnosis.predicted_condition}
+                      </div>
+                      <div className="mvg-hero-confidence">
+                        {(nlpDiagnosis.confidence * 100).toFixed(1)}% model confidence · {nlpDiagnosis.subsystem}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="mvg-hero-disease" style={{ color: severityColor }}>—</div>
+                  )}
                   <p className="mvg-plain-text">
-                    This reading comes only from the vitals you entered — a clinician needs to confirm with an exam
+                    {nlpDiagnosis
+                      ? "This diagnosis is based on the clinical findings you entered, analyzed by the NLP model."
+                      : "Enter clinical findings on the History & findings step to get a predicted diagnosis."}
+                  </p>
+                  <p className="mvg-plain-text">
+                    This reading comes only from what you entered — a clinician needs to confirm with an exam
                     and further tests.
                   </p>
-                </div>
-
-                <div className="mvg-card">
-                  <div className="mvg-report-match-head">
-                    <div className="mvg-card-label">Full probability breakdown</div>
-                    <div className="mvg-muted-text">A doctor confirms the diagnosis, not the computer.</div>
-                  </div>
-                  {rankedDiseases.length === 0 ? (
-                    <p className="mvg-muted-text">No probability data returned.</p>
-                  ) : (
-                    rankedDiseases.map(([name, prob], i) => {
-                      const isTop = name === topDisease;
-                      const pct = Math.min(Math.max(prob, 0), 1) * 100;
-                      return (
-                        <div className="mvg-prob-row" key={name}>
-                          <div className="mvg-prob-head">
-                            <span className={`mvg-prob-name${isTop ? " top" : ""}`}>
-                              {name}
-                              {isTop && <span className="mvg-prob-badge">Top match</span>}
-                            </span>
-                            <span className="mvg-prob-pct">{pct.toFixed(1)}%</span>
-                          </div>
-                          <div className="mvg-prob-track">
-                            <div
-                              key={`${name}-${pct.toFixed(1)}`}
-                              className={`mvg-prob-fill${isTop ? " top" : ""}`}
-                              style={{
-                                "--mvg-bar-target": `${pct.toFixed(1)}%`,
-                                width: `${pct.toFixed(1)}%`,
-                                animationDelay: `${i * 90}ms`,
-                              }}
-                            />
-                          </div>
-                          <div className="mvg-prob-desc">{DISEASE_INFO[name] || ""}</div>
-                        </div>
-                      );
-                    })
-                  )}
                 </div>
 
                 {risk && (
