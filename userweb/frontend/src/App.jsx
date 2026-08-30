@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+import { BACKEND_URL, checkHealth } from "./services/api.js";
+import TriageForm from "./components/TriageForm.jsx";
 
 const SEVERITY_MAP = {
   1: ["Non-Urgent", "#6b7280"],
@@ -108,131 +108,21 @@ function vitalNarrative(kind, value) {
   }
 }
 
-const initialForm = {
-  patientId: "",
-  age: 0,
-  spo2: 98,
-  heartRate: 75,
-  systolicBp: 120,
-  diastolicBp: 80,
-  respRate: 16,
-  temp: 37.0,
-  painScore: 0,
-  histAsthma: false,
-  histDiabetes: false,
-  histHypertension: false,
-  histCad: false,
-  histStroke: false,
-  findings: "",
-};
-
-const HISTORY_FIELDS = [
-  { key: "histAsthma", label: "Asthma" },
-  { key: "histDiabetes", label: "Diabetes" },
-  { key: "histHypertension", label: "Hypertension" },
-  { key: "histCad", label: "Coronary artery disease" },
-  { key: "histStroke", label: "Prior stroke" },
-];
-
-const FORM_STEPS = [
-  { title: "Core vitals", sub: "The essentials for a fast triage read" },
-  { title: "Additional vitals", sub: "Fills in the full risk picture" },
-  { title: "History & findings", sub: "Last step before analysis" },
-];
-
 export default function App() {
   const [healthy, setHealthy] = useState(false);
-  const [form, setForm] = useState(initialForm);
   const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [tab, setTab] = useState("criticality");
   const [analyzedAt, setAnalyzedAt] = useState(null);
-  const [step, setStep] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${BACKEND_URL}/`)
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
+    checkHealth()
       .then(() => !cancelled && setHealthy(true))
       .catch(() => !cancelled && setHealthy(false));
     return () => {
       cancelled = true;
     };
   }, []);
-
-  function updateField(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError("");
-
-    if (!form.patientId.trim()) {
-      setError("Patient ID is required.");
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const response = await fetch(`${BACKEND_URL}/analyze-vitals`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patient_id: form.patientId.trim(),
-          age: Number(form.age),
-          spo2: Number(form.spo2),
-          heart_rate: Number(form.heartRate),
-          systolic_bp: Number(form.systolicBp),
-          diastolic_bp: Number(form.diastolicBp),
-          resp_rate: Number(form.respRate),
-          temp: Number(form.temp),
-          pain_score: Number(form.painScore),
-          hist_asthma: form.histAsthma,
-          hist_diabetes: form.histDiabetes,
-          hist_hypertension: form.histHypertension,
-          hist_cad: form.histCad,
-          hist_stroke: form.histStroke,
-          findings: form.findings.trim(),
-        }),
-      });
-      if (!response.ok) {
-        const detail = await response.json().catch(() => null);
-        throw new Error(detail?.detail || `Backend returned status ${response.status}`);
-      }
-      const data = await response.json();
-      setResult(data);
-      setAnalyzedAt(new Date());
-      setTab("criticality");
-    } catch (err) {
-      setError(err.message || "Analysis failed due to a network error.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function handleReset() {
-    setForm(initialForm);
-    setResult(null);
-    setError("");
-    setAnalyzedAt(null);
-    setStep(0);
-  }
-
-  function goNext() {
-    if (step === 0 && !form.patientId.trim()) {
-      setError("Patient ID is required.");
-      return;
-    }
-    setError("");
-    setStep((s) => Math.min(s + 1, FORM_STEPS.length - 1));
-  }
-
-  function goBack() {
-    setError("");
-    setStep((s) => Math.max(s - 1, 0));
-  }
 
   const vitals = result?.parsed_vitals;
   const severityLevel = result?.triage_severity_level ?? null;
@@ -282,186 +172,16 @@ export default function App() {
 
       {tab === "criticality" && (
         <div className="mvg-tab-panel">
-          <div className="mvg-form-header">
-            <h5>Enter patient vitals</h5>
-            <button type="button" className="mvg-btn-secondary" onClick={handleReset}>
-              New analysis
-            </button>
-          </div>
-
-          <form className="mvg-card mvg-form" onSubmit={handleSubmit}>
-            <div className="mvg-wizard-head">
-              <div className="mvg-wizard-steps">
-                {FORM_STEPS.map((s, i) => (
-                  <div key={s.title} className={`mvg-wizard-step${i === step ? " active" : i < step ? " done" : ""}`}>
-                    <span className="mvg-wizard-dot">{i < step ? "✓" : i + 1}</span>
-                    {s.title}
-                  </div>
-                ))}
-              </div>
-              <div className="mvg-wizard-sub">{FORM_STEPS[step].sub}</div>
-            </div>
-
-            {step === 0 && (
-              <div className="mvg-form-grid mvg-tab-panel" key="step-0">
-                <label>
-                  Patient ID
-                  <input
-                    type="text"
-                    maxLength={64}
-                    autoFocus
-                    value={form.patientId}
-                    onChange={(e) => updateField("patientId", e.target.value)}
-                  />
-                </label>
-                <label>
-                  Age (years)
-                  <input
-                    type="number"
-                    min={0}
-                    max={130}
-                    step={1}
-                    value={form.age}
-                    onChange={(e) => updateField("age", e.target.value)}
-                  />
-                </label>
-                <label>
-                  SpO2 (%)
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    value={form.spo2}
-                    onChange={(e) => updateField("spo2", e.target.value)}
-                  />
-                </label>
-                <label>
-                  Heart rate (bpm)
-                  <input
-                    type="number"
-                    min={0}
-                    max={300}
-                    step={1}
-                    value={form.heartRate}
-                    onChange={(e) => updateField("heartRate", e.target.value)}
-                  />
-                </label>
-                <label>
-                  Systolic BP (mmHg)
-                  <input
-                    type="number"
-                    min={0}
-                    max={300}
-                    step={1}
-                    value={form.systolicBp}
-                    onChange={(e) => updateField("systolicBp", e.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-
-            {step === 1 && (
-              <div className="mvg-form-grid mvg-tab-panel" key="step-1">
-                <label>
-                  Diastolic BP (mmHg)
-                  <input
-                    type="number"
-                    min={0}
-                    max={200}
-                    step={1}
-                    value={form.diastolicBp}
-                    onChange={(e) => updateField("diastolicBp", e.target.value)}
-                  />
-                </label>
-                <label>
-                  Respiratory rate (breaths/min)
-                  <input
-                    type="number"
-                    min={0}
-                    max={80}
-                    step={1}
-                    value={form.respRate}
-                    onChange={(e) => updateField("respRate", e.target.value)}
-                  />
-                </label>
-                <label>
-                  Temperature (&deg;C)
-                  <input
-                    type="number"
-                    min={30}
-                    max={45}
-                    step={0.1}
-                    value={form.temp}
-                    onChange={(e) => updateField("temp", e.target.value)}
-                  />
-                </label>
-                <label>
-                  Pain score (0-10)
-                  <input
-                    type="number"
-                    min={0}
-                    max={10}
-                    step={1}
-                    value={form.painScore}
-                    onChange={(e) => updateField("painScore", e.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-
-            {step === 2 && (
-              <div className="mvg-tab-panel" key="step-2">
-                <label className="mvg-history-label">
-                  Medical history
-                  <div className="mvg-history-grid">
-                    {HISTORY_FIELDS.map(({ key, label }) => (
-                      <label className="mvg-checkbox" key={key}>
-                        <input
-                          type="checkbox"
-                          checked={form[key]}
-                          onChange={(e) => updateField(key, e.target.checked)}
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-                </label>
-                <label className="mvg-findings-label">
-                  Clinical findings (optional)
-                  <textarea
-                    maxLength={4000}
-                    rows={3}
-                    value={form.findings}
-                    onChange={(e) => updateField("findings", e.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-
-            {error && <div className="mvg-error">{error}</div>}
-
-            <div className="mvg-wizard-nav">
-              <button
-                type="button"
-                className="mvg-btn-secondary"
-                onClick={goBack}
-                disabled={step === 0}
-                style={{ visibility: step === 0 ? "hidden" : "visible" }}
-              >
-                Back
-              </button>
-              {step < FORM_STEPS.length - 1 ? (
-                <button type="button" className="mvg-btn-primary" onClick={goNext}>
-                  Next
-                </button>
-              ) : (
-                <button type="submit" className="mvg-btn-primary" disabled={submitting}>
-                  {submitting ? "Analyzing..." : "Analyze vitals"}
-                </button>
-              )}
-            </div>
-          </form>
+          <TriageForm
+            onAnalyzed={(data) => {
+              setResult(data);
+              setAnalyzedAt(new Date());
+            }}
+            onReset={() => {
+              setResult(null);
+              setAnalyzedAt(null);
+            }}
+          />
 
           {!result && (
             <div className="mvg-card mvg-placeholder">
