@@ -41,10 +41,10 @@ except FileNotFoundError:
     risk_model = None
     logger.warning("risk_model.pkl not found at %s — /analyze-vitals will run without risk scoring", RISK_MODEL_PATH)
 
-# DEMO MODEL — trained on synthetic data (train_xgboost.py generates it locally
-# via SQLite since no real patient_records dataset exists in this repo). Its
-# predictions carry no real clinical signal; every response using it is
-# flagged "is_demo": true so the frontend can label it accordingly.
+# Trained on the project's patient_records dataset (see train_xgboost.py).
+# Every response using it is still flagged "is_demo": true so the frontend
+# can caveat it — it's a classifier trained for this project, not a
+# clinically validated model.
 SEVERITY_MODEL_PATH = Path(__file__).parent / "models" / "severity_model.json"
 try:
     severity_model = xgb.XGBClassifier()
@@ -72,7 +72,7 @@ class VitalsInput(BaseModel):
     findings: str = Field("", max_length=4000)
 
 
-def score_manual_vitals(spo2: float, heart_rate: float, systolic_bp: float, age: int) -> int:
+def score_manual_vitals(spo2: float, heart_rate: float, systolic_bp: float, temp: float, age: int) -> int:
     """Simple rule-based triage score for manually-entered vitals. Each
     out-of-range vital adds to the score, clamped into a 1-5 severity scale."""
     score = 1
@@ -82,12 +82,16 @@ def score_manual_vitals(spo2: float, heart_rate: float, systolic_bp: float, age:
         score += 1
     if systolic_bp < 90 or systolic_bp > 130:
         score += 1
+    if temp < 35 or temp > 39.5:
+        score += 2
+    elif temp < 36 or temp > 38.5:
+        score += 1
     if age >= 65:
         score += 1
     return max(1, min(5, score))
 
 
-def score_disease_probabilities(spo2: float, heart_rate: float, systolic_bp: float, age: int) -> dict:
+def score_disease_probabilities(spo2: float, heart_rate: float, systolic_bp: float, temp: float, age: int) -> dict:
     """Rule-based likelihood estimate across a fixed set of conditions, driven
     by how far vitals sit from normal ranges. This is a heuristic, not a
     trained model — there's no ML backend behind manually-entered vitals."""
@@ -115,6 +119,12 @@ def score_disease_probabilities(spo2: float, heart_rate: float, systolic_bp: flo
     elif systolic_bp < 90:
         scores["Sepsis"] += (90 - systolic_bp) * 0.15
         scores["Cardiac Event"] += (90 - systolic_bp) * 0.05
+
+    if temp > 38.5:
+        scores["Respiratory Infection"] += (temp - 38.5) * 0.6
+        scores["Sepsis"] += (temp - 38.5) * 0.5
+    elif temp < 35:
+        scores["Sepsis"] += (35 - temp) * 0.6
 
     if age >= 65:
         scores["Cardiac Event"] += 1.0
@@ -153,9 +163,9 @@ SEVERITY_ML_LABELS = {1: "Non-Urgent", 2: "Low", 3: "Moderate", 4: "High", 5: "C
 
 
 def score_severity_ml(vitals: "VitalsInput") -> dict | None:
-    """Runs the XGBoost severity classifier (train_xgboost.py). DEMO MODEL:
-    trained on synthetic data, not real patient records — see the module-level
-    comment on severity_model. Returns None if the model didn't load."""
+    """Runs the XGBoost severity classifier (train_xgboost.py) — see the
+    module-level comment on severity_model. Returns None if the model
+    didn't load."""
     if severity_model is None:
         return None
 
@@ -180,7 +190,7 @@ def score_severity_ml(vitals: "VitalsInput") -> dict | None:
         "label": SEVERITY_ML_LABELS.get(level, "Unknown"),
         "confidence": round(float(proba[predicted_class]) * 100, 1),
         "is_demo": True,
-        "note": "Demo model trained on synthetic data — not a real clinical signal.",
+        "note": "Model prediction, not a clinical diagnosis — a clinician makes the final call.",
     }
 
 
@@ -234,8 +244,10 @@ def analyze_vitals(vitals: VitalsInput):
     if not patient_id:
         raise HTTPException(status_code=422, detail="patient_id is required")
 
-    severity_level = score_manual_vitals(vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.age)
-    disease_probabilities = score_disease_probabilities(vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.age)
+    severity_level = score_manual_vitals(vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.temp, vitals.age)
+    disease_probabilities = score_disease_probabilities(
+        vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.temp, vitals.age
+    )
     risk = score_patient_risk(vitals)
     severity_ml = score_severity_ml(vitals)
 
