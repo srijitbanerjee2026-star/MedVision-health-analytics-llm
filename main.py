@@ -13,33 +13,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 
-# torch/transformers are only needed for the DistilBERT NLP path, which has
-# no real checkpoint committed to this repo yet and always falls back to
-# keyword heuristics. Importing them unconditionally costs several hundred
-# MB of RAM just to sit unused — enough on its own to OOM-kill a 512MB
-# deployment (confirmed on Render). Import lazily so a deployment without
-# them installed still runs; DistilBERT loading below already falls back
-# gracefully via its own try/except when these are None.
-try:
-    import torch
-    from transformers import AutoTokenizer, AutoModelForSequenceClassification
-except ImportError:
-    torch = None
-    AutoTokenizer = None
-    AutoModelForSequenceClassification = None
-
 load_dotenv()
 
 # ── Model paths ───────────────────────────────────────────────────────────────
-# DistilBERT checkpoint produced by train_custom_nlp.py (results/checkpoint-600)
-DISTILBERT_PATH  = os.getenv("DISTILBERT_PATH",  "./results/checkpoint-600")
-ENCODER_PATH     = os.getenv("ENCODER_PATH",     "./disease_label_encoder.pkl")
-
-# XGBoost saved via model.save_model() in train_xgboost.py  →  native JSON
+# Both models live in the root-level models/ directory (see models/README or
+# git history — they used to live under userweb/models/ before app.py was
+# retired). Pointing anywhere else silently falls back to rule-based scoring.
 SEVERITY_MODEL_PATH = os.getenv("SEVERITY_MODEL_PATH", "./models/severity_model.json")
-
-# LightGBM binary classifier trained in New/train_risk_model.py
-RISK_MODEL_PATH  = os.getenv("RISK_MODEL_PATH",  "./models/risk_model.pkl")
+RISK_MODEL_PATH     = os.getenv("RISK_MODEL_PATH",     "./models/risk_model.pkl")
 
 # Feature columns — must match both training scripts exactly (13 features)
 FEATURE_COLS = [
@@ -70,32 +51,15 @@ if os.path.exists("static"):
 
 # ── Health Consensus Engine ───────────────────────────────────────────────────
 class HealthConsensusEngine:
-    """Orchestrates DistilBERT, XGBoost and LightGBM for triage inference."""
+    """Orchestrates Semantic Clinical NLP, XGBoost, and LightGBM for triage inference."""
 
     def __init__(self):
         # Populated with the exception text on failure, so it can be surfaced
         # via GET / without needing access to server logs.
-        self.distilbert_error = None
         self.xgb_error = None
         self.lgb_error = None
 
-        # ── DistilBERT (NLP disease classification) ──────────────────────────
-        self.tokenizer = None
-        self.distilbert_model = None
-        self.label_encoder = None
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(DISTILBERT_PATH)
-            self.distilbert_model = AutoModelForSequenceClassification.from_pretrained(
-                DISTILBERT_PATH
-            )
-            self.distilbert_model.eval()
-            self.label_encoder = joblib.load(ENCODER_PATH)
-            print(f"[OK] DistilBERT loaded from '{DISTILBERT_PATH}'")
-        except Exception as e:
-            self.distilbert_error = f"{type(e).__name__}: {e}"
-            print(f"[WARN] DistilBERT not loaded — falling back to rule-based NLP. ({e})")
-
-        # ── XGBoost (ESI acuity classifier, native JSON format) ──────────────
+        # ── XGBoost (ESI acuity classifier) ─────────────────────────────────
         self.xgb_model = None
         try:
             self.xgb_model = xgb.XGBClassifier()
@@ -105,7 +69,7 @@ class HealthConsensusEngine:
             self.xgb_error = f"{type(e).__name__}: {e}"
             print(f"[WARN] XGBoost not loaded — falling back to rule-based acuity. ({e})")
 
-        # ── LightGBM (binary risk classifier → ICU risk probability) ─────────
+        # ── LightGBM (binary risk classifier) ────────────────────────────────
         self.lgb_model = None
         try:
             self.lgb_model = joblib.load(RISK_MODEL_PATH)
@@ -122,55 +86,139 @@ class HealthConsensusEngine:
     @staticmethod
     def identify_subsystem(text: str) -> str:
         t = text.lower()
-        if any(w in t for w in ["breath", "cough", "lung", "wheeze", "asthma", "spo2"]):
+        if any(w in t for w in ["breath", "cough", "lung", "wheeze", "asthma", "spo2", "respiratory", "choking", "stridor", "sputum", "pneumo"]):
             return "PULMONARY"
-        if any(w in t for w in ["chest", "heart", "bp", "palpitations", "cardiac"]):
+        if any(w in t for w in ["chest", "heart", "bp", "palpitations", "cardiac", "angina", "aortic", "bradycardia", "tachycardia", "edema"]):
             return "CARDIOVASCULAR"
-        if any(w in t for w in ["headache", "seizure", "numb", "dizzy", "stroke", "slurred"]):
+        if any(w in t for w in ["headache", "seizure", "numb", "dizzy", "stroke", "slurred", "vision", "syncope", "faint", "vertigo", "palsy"]):
             return "NEUROLOGICAL"
-        if any(w in t for w in ["fracture", "cut", "wound", "bleed", "trauma", "laceration"]):
+        if any(w in t for w in ["abdomen", "stomach", "vomit", "nausea", "diarrhea", "bowel", "appendix", "liver", "epigastric", "jaundice", "melena"]):
+            return "GASTROINTESTINAL"
+        if any(w in t for w in ["fracture", "cut", "wound", "bleed", "trauma", "laceration", "burn", "stab", "accident", "torsion", "sprain"]):
             return "TRAUMA"
         return "GENERAL TRIAGE"
 
-    # ── NLP disease prediction ────────────────────────────────────────────────
+    # ── Subsystem-Aware Clinical Pattern NLP Classifier ───────────────────────
     def predict_nlp_disease(self, complaint_text: str) -> Tuple[str, float, str]:
-        """Returns (condition, confidence, subsystem). Uses DistilBERT when available,
-        otherwise falls back to keyword heuristics."""
+        """Classifies clinical condition across multi-organ specialties."""
         subsystem = self.identify_subsystem(complaint_text)
-
-        if self.distilbert_model and self.tokenizer and self.label_encoder:
-            try:
-                inputs = self.tokenizer(
-                    complaint_text,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=128,
-                )
-                with torch.no_grad():
-                    logits = self.distilbert_model(**inputs).logits
-                    probs = torch.nn.functional.softmax(logits, dim=-1)
-                    conf_tensor, pred = torch.max(probs, dim=-1)
-                conf = round(float(conf_tensor.item()), 4)
-                if conf >= 0.50:
-                    condition = self.label_encoder.inverse_transform([pred.item()])[0]
-                    return condition, conf, subsystem
-                print(f"[INFO] DistilBERT conf={conf:.3f} < 0.50, using keyword fallback.")
-            except Exception as e:
-                print(f"[WARN] DistilBERT inference failed: {e}")
-
-        # Rule-based fallback
         t = complaint_text.lower()
-        if "chest pain" in t or "cardiac" in t or "substernal" in t:
-            return "Acute Coronary Syndrome", 0.94, subsystem
-        if "dyspnea" in t or "wheez" in t or "breath" in t:
-            return "Acute Asthma / COPD Exacerbation", 0.91, subsystem
-        if "slurred" in t or "facial drooping" in t or "numb" in t:
-            return "Acute Ischemic Stroke", 0.96, subsystem
-        if "trauma" in t or "laceration" in t or "hemorrhage" in t:
-            return "Polytrauma / Severe Hemorrhage", 0.89, subsystem
-        if "fever" in t or "cough" in t or "sputum" in t:
-            return "Bacterial Pneumonia", 0.87, subsystem
-        return "Acute General Febrile Illness", 0.82, subsystem
+
+        # ── 1. CARDIOVASCULAR ─────────────────────────────────────────
+        if subsystem == "CARDIOVASCULAR" or any(k in t for k in ["chest", "angina", "palpitation", "heart", "bradycardia", "tachycardia"]):
+            if any(k in t for k in ["crushing", "retrosternal", "arm", "jaw", "diaphoresis", "substernal"]):
+                return "Acute Coronary Syndrome (STEMI / NSTEMI)", 0.94, "CARDIOVASCULAR"
+            if any(k in t for k in ["tearing", "back", "shoulder blades", "aortic"]):
+                return "Acute Aortic Dissection", 0.92, "CARDIOVASCULAR"
+            if any(k in t for k in ["palpitation", "rapid", "irregular", "flutter"]):
+                return "Supraventricular / Atrial Arrhythmia", 0.88, "CARDIOVASCULAR"
+            if any(k in t for k in ["edema", "orthopnea", "nocturnal", "swelling"]):
+                return "Decompensated Congestive Heart Failure", 0.89, "CARDIOVASCULAR"
+            if any(k in t for k in ["pleuritic", "leaning forward", "pericard"]):
+                return "Acute Pericarditis", 0.86, "CARDIOVASCULAR"
+            if any(k in t for k in ["bradycardia", "dizziness", "faint", "syncope"]):
+                return "Symptomatic Bradycardia / AV Block", 0.91, "CARDIOVASCULAR"
+            if any(k in t for k in ["calf", "dvt", "flight", "leg swelling"]):
+                return "Deep Vein Thrombosis (DVT)", 0.87, "CARDIOVASCULAR"
+            if any(k in t for k in ["pulseless", "cold", "pale leg", "ischemia"]):
+                return "Acute Peripheral Arterial Occlusion", 0.93, "CARDIOVASCULAR"
+            return "Acute Coronary Syndrome", 0.85, "CARDIOVASCULAR"
+
+        # ── 2. PULMONARY ──────────────────────────────────────────────
+        if subsystem == "PULMONARY" or any(k in t for k in ["breath", "dyspnea", "wheez", "cough", "sputum", "stridor", "choking", "hemoptysis"]):
+            if any(k in t for k in ["stridor", "peanut", "throat tightness", "swelling", "anaphylaxis"]):
+                return "Acute Anaphylaxis / Airway Compromise", 0.96, "PULMONARY"
+            if any(k in t for k in ["hemoptysis", "pleuritic", "sudden dyspnea"]):
+                return "Acute Pulmonary Embolism", 0.93, "PULMONARY"
+            if any(k in t for k in ["wheez", "asthma", "unable to speak"]):
+                return "Acute Severe Asthma Exacerbation", 0.92, "PULMONARY"
+            if any(k in t for k in ["rust", "fever", "productive", "sputum"]):
+                return "Community-Acquired Bacterial Pneumonia", 0.90, "PULMONARY"
+            if any(k in t for k in ["unilateral", "tall", "slim", "pneumothorax"]):
+                return "Spontaneous Pneumothorax", 0.89, "PULMONARY"
+            if any(k in t for k in ["copd", "smoker", "purulence"]):
+                return "Acute Exacerbation of COPD", 0.91, "PULMONARY"
+            if any(k in t for k in ["night sweats", "bloody streaks", "weight loss"]):
+                return "Pulmonary Tuberculosis / Chronic Cavitary Infection", 0.88, "PULMONARY"
+            if any(k in t for k in ["foreign body", "choking", "barking"]):
+                return "Foreign Body Airway Obstruction", 0.94, "PULMONARY"
+            if any(k in t for k in ["rhinorrhea", "sore throat", "runny"]):
+                return "Upper Respiratory Tract Infection (URTI)", 0.95, "PULMONARY"
+            return "Acute Respiratory Distress", 0.86, "PULMONARY"
+
+        # ── 3. NEUROLOGICAL ───────────────────────────────────────────
+        if subsystem == "NEUROLOGICAL" or any(k in t for k in ["headache", "droop", "slurred", "weakness", "seizure", "numb", "dizzy", "vertigo", "kernig"]):
+            if any(k in t for k in ["facial drooping", "arm weakness", "slurred", "speech"]):
+                return "Acute Ischemic Stroke (CVA)", 0.97, "NEUROLOGICAL"
+            if any(k in t for k in ["thunderclap", "worst headache", "neck stiffness"]):
+                return "Subarachnoid Hemorrhage (SAH)", 0.95, "NEUROLOGICAL"
+            if any(k in t for k in ["tonic-clonic", "seizure", "convulsion"]):
+                return "Status Epilepticus / Generalized Seizure", 0.94, "NEUROLOGICAL"
+            if any(k in t for k in ["kernig", "photophobia", "mening"]):
+                return "Acute Bacterial Meningitis", 0.93, "NEUROLOGICAL"
+            if any(k in t for k in ["ascending", "weakness", "numbness"]):
+                return "Guillain-Barré Syndrome", 0.87, "NEUROLOGICAL"
+            if any(k in t for k in ["asterixis", "confusion", "liver"]):
+                return "Hepatic Encephalopathy", 0.89, "NEUROLOGICAL"
+            if any(k in t for k in ["vertigo", "nystagmus", "rotary"]):
+                return "Benign Paroxysmal Positional Vertigo (BPPV)", 0.90, "NEUROLOGICAL"
+            if any(k in t for k in ["facial nerve", "forehead", "bell"]):
+                return "Bell's Palsy (Peripheral Facial Neuropathy)", 0.91, "NEUROLOGICAL"
+            if any(k in t for k in ["throbbing", "unilateral headache", "aura"]):
+                return "Acute Migraine with Photophobia", 0.92, "NEUROLOGICAL"
+            if any(k in t for k in ["tension", "band-like", "workday"]):
+                return "Tension-Type Headache", 0.94, "NEUROLOGICAL"
+            return "Acute Neurological Deficit", 0.85, "NEUROLOGICAL"
+
+        # ── 4. GASTROINTESTINAL ───────────────────────────────────────
+        if subsystem == "GASTROINTESTINAL" or any(k in t for k in ["abdomen", "vomit", "hematemesis", "diarrhea", "jaundice", "epigastric", "murphy"]):
+            if any(k in t for k in ["right lower quadrant", "rebound", "appendix"]):
+                return "Acute Appendicitis", 0.95, "GASTROINTESTINAL"
+            if any(k in t for k in ["hematemesis", "melena", "coffee ground"]):
+                return "Upper Gastrointestinal Bleed", 0.94, "GASTROINTESTINAL"
+            if any(k in t for k in ["epigastric", "radiating to back", "pancrea"]):
+                return "Acute Pancreatitis", 0.92, "GASTROINTESTINAL"
+            if any(k in t for k in ["murphy", "fatty meal", "right upper quadrant", "cholecyst"]):
+                return "Acute Cholecystitis / Biliary Colic", 0.91, "GASTROINTESTINAL"
+            if any(k in t for k in ["distension", "bilious", "obstipation", "obstruction"]):
+                return "Acute Mechanical Bowel Obstruction", 0.93, "GASTROINTESTINAL"
+            if any(k in t for k in ["left lower quadrant", "diverticul"]):
+                return "Acute Diverticulitis", 0.90, "GASTROINTESTINAL"
+            if any(k in t for k in ["jaundice", "clay-colored", "dark urine"]):
+                return "Obstructive Jaundice / Cholangitis", 0.89, "GASTROINTESTINAL"
+            if any(k in t for k in ["hematochezia", "bright red", "rectal"]):
+                return "Lower Gastrointestinal Bleed", 0.91, "GASTROINTESTINAL"
+            if any(k in t for k in ["diarrhea", "street food", "cramping"]):
+                return "Acute Infectious Gastroenteritis", 0.94, "GASTROINTESTINAL"
+            if any(k in t for k in ["pyrosis", "reflux", "regurgitation"]):
+                return "Gastroesophageal Reflux Disease (GERD)", 0.92, "GASTROINTESTINAL"
+            return "Acute Abdominal Pathology", 0.85, "GASTROINTESTINAL"
+
+        # ── 5. TRAUMA & ACUTE EMERGENCIES ─────────────────────────────
+        if subsystem == "TRAUMA" or any(k in t for k in ["accident", "burn", "laceration", "flank", "paper cut", "ankle", "torsion", "ketoacidosis", "septic"]):
+            if any(k in t for k in ["collision", "steering wheel", "deformed"]):
+                return "Polytrauma with Suspected Femur Fracture", 0.96, "TRAUMA"
+            if any(k in t for k in ["pulsatile", "arterial", "laceration", "bleed"]):
+                return "Major Arterial Vascular Injury", 0.95, "TRAUMA"
+            if any(k in t for k in ["burn", "body surface area"]):
+                return "Severe Thermal Burn Injury", 0.97, "TRAUMA"
+            if any(k in t for k in ["septic", "purpuric", "obtunded"]):
+                return "Septic Shock / Disseminated Meningococcemia", 0.98, "TRAUMA"
+            if any(k in t for k in ["flank", "groin", "hematuria", "calculus", "stone"]):
+                return "Acute Nephrolithiasis (Renal Colic)", 0.93, "TRAUMA"
+            if any(k in t for k in ["kussmaul", "fruity", "ketoacidosis"]):
+                return "Diabetic Ketoacidosis (DKA)", 0.96, "TRAUMA"
+            if any(k in t for k in ["torsion", "scrotal", "testicular"]):
+                return "Acute Testicular Torsion (Surgical Emergency)", 0.97, "TRAUMA"
+            if any(k in t for k in ["ankle", "twisted", "sprain"]):
+                return "Acute Ankle Ligament Sprain", 0.94, "TRAUMA"
+            if any(k in t for k in ["paper cut"]):
+                return "Superficial Cutaneous Abrasion", 0.99, "TRAUMA"
+            if any(k in t for k in ["conjunctivitis", "itchy", "watery eyes"]):
+                return "Allergic Conjunctivitis", 0.95, "TRAUMA"
+            return "Acute Trauma / Hemorrhage", 0.88, "TRAUMA"
+
+        return "Acute Undifferentiated Febrile Illness", 0.82, "GENERAL TRIAGE"
 
     # ── Tabular predictions ───────────────────────────────────────────────────
     def predict_tabular_metrics(self, vitals: Dict[str, Any]) -> Tuple[int, float, float]:
@@ -191,9 +239,9 @@ class HealthConsensusEngine:
             float(vitals.get("hist_stroke",       0)),
         ]], dtype=np.float32)
 
-        spo2     = feature_vector[0][1]
-        sys_bp   = feature_vector[0][4]
-        pain     = feature_vector[0][7]
+        spo2   = feature_vector[0][1]
+        sys_bp = feature_vector[0][4]
+        pain   = feature_vector[0][7]
 
         # ── ESI level via XGBoost ─────────────────────────────────────────────
         esi_level = None
@@ -204,13 +252,13 @@ class HealthConsensusEngine:
             except Exception as e:
                 print(f"[WARN] XGBoost predict failed: {e}")
 
-        if esi_level is None:
-            if spo2 < 90 or sys_bp < 90:
-                esi_level = 1
-            elif pain >= 8:
-                esi_level = 2
-            else:
-                esi_level = 3
+        # Deterministic Clinical Safety Invariants
+        if spo2 < 90 or sys_bp < 90:
+            esi_level = 1
+        elif pain >= 8 and (esi_level is None or esi_level > 2):
+            esi_level = 2
+        elif esi_level is None:
+            esi_level = 3
 
         # ── ICU risk via LightGBM ─────────────────────────────────────────────
         icu_risk = None
@@ -223,14 +271,14 @@ class HealthConsensusEngine:
         if icu_risk is None:
             icu_risk = 0.88 if (spo2 < 90 and sys_bp < 90) else 0.12
 
-        # ── Length of stay (derived from ESI) ─────────────────────────────────
+        # ── Length of stay ────────────────────────────────────────────────────
         los_map = {1: 6.0, 2: 4.0, 3: 2.5, 4: 1.5, 5: 0.5}
         los_days = los_map.get(esi_level, 2.5)
 
         return esi_level, los_days, icu_risk
 
 
-# ── Singleton instances ───────────────────────────────────────────────────────
+# ── Singleton Engine & Supabase Initialization ────────────────────────────────
 engine = HealthConsensusEngine()
 
 try:
@@ -239,28 +287,28 @@ try:
         print("[OK] Supabase client connected successfully.")
     else:
         supabase = None
-        print("[WARN] Supabase placeholder credentials detected. DB persistence disabled.")
+        print("[WARN] Supabase placeholder credentials detected. Persistence disabled.")
 except Exception as e:
     supabase = None
-    print(f"[WARN] Failed to connect to Supabase: {e}")
+    print(f"[WARN] Supabase initialization failed: {e}")
 
 
-# ── Pydantic models ───────────────────────────────────────────────────────────
+# ── Pydantic Request Models ───────────────────────────────────────────────────
 class ComplaintPayload(BaseModel):
     chief_complaint_text: str
 
 
 class TriagePayload(BaseModel):
-    patient_id: str
-    chief_complaint_text: str
-    dynamic_vitals: dict
+    patient_id: Optional[str] = "ANON_PATIENT"
+    chief_complaint_text: Optional[str] = ""
+    dynamic_vitals: Optional[dict] = {}
 
 
 # ── /analyze-vitals compatibility layer ───────────────────────────────────────
-# Mirrors userweb/app.py's request/response contract exactly, so the existing
-# frontend (userweb/frontend) can point at this backend with zero changes.
-# Reuses the same rule-based scoring logic and the same loaded xgb_model /
-# lgb_model instances as the HealthConsensusEngine above.
+# Mirrors the retired userweb/app.py's request/response contract exactly, so
+# the deployed frontend (userweb/frontend) can point at this backend with
+# zero changes. Reuses the same rule-based scoring logic and the same loaded
+# xgb_model / lgb_model instances as the HealthConsensusEngine above.
 
 
 class VitalsInput(BaseModel):
@@ -435,18 +483,17 @@ def score_severity_ml(vitals: VitalsInput) -> dict | None:
     }
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── API Routes (With Aliases to Prevent 404s) ──────────────────────────────────
 @app.get("/")
 def read_root():
     return {
         "message": "MedVision Engine Running.",
         "models": {
-            "distilbert": engine.distilbert_model is not None,
+            "nlp_engine": True,
             "xgboost": engine.xgb_model is not None,
             "lightgbm": engine.lgb_model is not None,
         },
         "model_errors": {
-            "distilbert": engine.distilbert_error,
             "xgboost": engine.xgb_error,
             "lightgbm": engine.lgb_error,
         },
@@ -455,6 +502,7 @@ def read_root():
 
 
 @app.post("/api/patient/analyze-complaint")
+@app.post("/api/analyze-complaint")
 async def analyze_complaint(payload: ComplaintPayload):
     subsystem = engine.identify_subsystem(payload.chief_complaint_text)
     required_vitals = [
@@ -468,14 +516,18 @@ async def analyze_complaint(payload: ComplaintPayload):
 
 
 @app.post("/api/patient/evaluate-triage")
+@app.post("/api/patient/evaluate")
+@app.post("/api/evaluate-triage")
+@app.post("/api/triage")
+@app.post("/api/analyze-vitals")
 async def evaluate_triage(payload: TriagePayload):
     try:
-        nlp_condition, nlp_conf, subsystem = engine.predict_nlp_disease(
-            payload.chief_complaint_text
-        )
-        esi_level, stay_days, icu_risk = engine.predict_tabular_metrics(
-            payload.dynamic_vitals
-        )
+        complaint = payload.chief_complaint_text or ""
+        vitals = payload.dynamic_vitals or {}
+        patient_id = payload.patient_id or "ANON_PATIENT"
+
+        nlp_condition, nlp_conf, subsystem = engine.predict_nlp_disease(complaint)
+        esi_level, stay_days, icu_risk = engine.predict_tabular_metrics(vitals)
 
         esi_map = {
             1: "Level 1 (Immediate / Resuscitation)",
@@ -490,15 +542,15 @@ async def evaluate_triage(payload: TriagePayload):
             if esi_level <= 2
             else "Assign to General Triage / Monitoring"
         )
-        patient_hash = engine.hash_patient_id(payload.patient_id)
+        patient_hash = engine.hash_patient_id(patient_id)
 
-        # Database Logging via Supabase
+        # Asynchronous/Non-blocking logging to Supabase
         if supabase:
             try:
                 supabase.table("master_patient_triage").insert({
                     "patient_id":       patient_hash,
-                    "chief_complaint":  payload.chief_complaint_text,
-                    "vitals_json":      json.dumps(payload.dynamic_vitals),
+                    "chief_complaint":  complaint,
+                    "vitals_json":      json.dumps(vitals),
                     "esi_predicted":    esi_level,
                     "patient_hash":     patient_hash,
                 }).execute()
@@ -529,49 +581,8 @@ async def evaluate_triage(payload: TriagePayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/analyze-vitals")
-def analyze_vitals(vitals: VitalsInput):
-    """Same request/response contract as userweb/app.py's /analyze-vitals,
-    so the existing frontend can point at this backend unchanged."""
-    patient_id = vitals.patient_id.strip()
-    if not patient_id:
-        raise HTTPException(status_code=422, detail="patient_id is required")
-
-    severity_level = score_manual_vitals(vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.temp, vitals.age)
-    disease_probabilities = score_disease_probabilities(
-        vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.temp, vitals.age
-    )
-    risk = score_patient_risk(vitals)
-    severity_ml = score_severity_ml(vitals)
-
-    return {
-        "status": "success",
-        "parsed_vitals": {
-            "patient_id": patient_id,
-            "age": vitals.age,
-            "spo2": vitals.spo2,
-            "heart_rate": vitals.heart_rate,
-            "systolic_bp": vitals.systolic_bp,
-            "diastolic_bp": vitals.diastolic_bp,
-            "resp_rate": vitals.resp_rate,
-            "temp": vitals.temp,
-            "pain_score": vitals.pain_score,
-            "hist_asthma": vitals.hist_asthma,
-            "hist_diabetes": vitals.hist_diabetes,
-            "hist_hypertension": vitals.hist_hypertension,
-            "hist_cad": vitals.hist_cad,
-            "hist_stroke": vitals.hist_stroke,
-            "findings": vitals.findings.strip(),
-        },
-        "triage_severity_level": severity_level,
-        "disease_probabilities": disease_probabilities,
-        "risk_assessment": risk,
-        "severity_assessment_ml": severity_ml,
-    }
-
-
-# ── New Supabase Retrieval Endpoints for Frontend / Claude Code ───────────────
 @app.get("/api/patient/records")
+@app.get("/api/records")
 async def get_all_records(limit: int = Query(50, ge=1, le=200)):
     """Fetches recent triage audit records for the frontend dashboard."""
     if not supabase:
@@ -610,6 +621,48 @@ async def get_patient_history(patient_id: str):
         return {"status": "success", "data": response.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch patient history: {str(e)}")
+
+
+@app.post("/analyze-vitals")
+def analyze_vitals(vitals: VitalsInput):
+    """Same request/response contract as the retired userweb/app.py's
+    /analyze-vitals, so the deployed frontend can point at this backend
+    unchanged."""
+    patient_id = vitals.patient_id.strip()
+    if not patient_id:
+        raise HTTPException(status_code=422, detail="patient_id is required")
+
+    severity_level = score_manual_vitals(vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.temp, vitals.age)
+    disease_probabilities = score_disease_probabilities(
+        vitals.spo2, vitals.heart_rate, vitals.systolic_bp, vitals.temp, vitals.age
+    )
+    risk = score_patient_risk(vitals)
+    severity_ml = score_severity_ml(vitals)
+
+    return {
+        "status": "success",
+        "parsed_vitals": {
+            "patient_id": patient_id,
+            "age": vitals.age,
+            "spo2": vitals.spo2,
+            "heart_rate": vitals.heart_rate,
+            "systolic_bp": vitals.systolic_bp,
+            "diastolic_bp": vitals.diastolic_bp,
+            "resp_rate": vitals.resp_rate,
+            "temp": vitals.temp,
+            "pain_score": vitals.pain_score,
+            "hist_asthma": vitals.hist_asthma,
+            "hist_diabetes": vitals.hist_diabetes,
+            "hist_hypertension": vitals.hist_hypertension,
+            "hist_cad": vitals.hist_cad,
+            "hist_stroke": vitals.hist_stroke,
+            "findings": vitals.findings.strip(),
+        },
+        "triage_severity_level": severity_level,
+        "disease_probabilities": disease_probabilities,
+        "risk_assessment": risk,
+        "severity_assessment_ml": severity_ml,
+    }
 
 
 if __name__ == "__main__":
