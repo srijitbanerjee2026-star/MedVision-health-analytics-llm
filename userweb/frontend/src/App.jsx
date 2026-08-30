@@ -292,12 +292,6 @@ export default function App() {
                     This reading comes only from the vitals you entered — a clinician needs to confirm with an exam
                     and further tests.
                   </p>
-                  <div className="mvg-scan-source">
-                    <div className="mvg-card-label">The same thing, in your report</div>
-                    <div className="mvg-snippet">
-                      {vitals.findings || "No clinical findings were entered for this patient."}
-                    </div>
-                  </div>
                 </div>
 
                 <div className="mvg-card">
