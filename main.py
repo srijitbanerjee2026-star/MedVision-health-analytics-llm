@@ -1,6 +1,5 @@
 import os
 import json
-import torch
 import joblib
 import xgboost as xgb
 import numpy as np
@@ -12,8 +11,22 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from supabase import create_client, Client
+
+# torch/transformers are only needed for the DistilBERT NLP path, which has
+# no real checkpoint committed to this repo yet and always falls back to
+# keyword heuristics. Importing them unconditionally costs several hundred
+# MB of RAM just to sit unused — enough on its own to OOM-kill a 512MB
+# deployment (confirmed on Render). Import lazily so a deployment without
+# them installed still runs; DistilBERT loading below already falls back
+# gracefully via its own try/except when these are None.
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+except ImportError:
+    torch = None
+    AutoTokenizer = None
+    AutoModelForSequenceClassification = None
 
 load_dotenv()
 

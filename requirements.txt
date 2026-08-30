@@ -6,7 +6,13 @@ scikit-learn>=1.3.0
 xgboost>=2.0.0
 lightgbm>=4.3.0
 numpy>=1.26.0
-torch>=2.0.0
-transformers>=4.40.0
 supabase>=2.0.0
 python-dotenv>=1.0.0
+
+# torch and transformers are deliberately NOT listed here — they're only
+# needed for the DistilBERT NLP path, which has no committed checkpoint and
+# always falls back to keyword heuristics anyway. Importing them costs
+# enough RAM on its own to OOM-kill a 512MB deployment. If you have a real
+# DistilBERT checkpoint to wire up, add them back:
+#   torch>=2.0.0
+#   transformers>=4.40.0
