@@ -60,6 +60,12 @@ class HealthConsensusEngine:
     """Orchestrates DistilBERT, XGBoost and LightGBM for triage inference."""
 
     def __init__(self):
+        # Populated with the exception text on failure, so it can be surfaced
+        # via GET / without needing access to server logs.
+        self.distilbert_error = None
+        self.xgb_error = None
+        self.lgb_error = None
+
         # ── DistilBERT (NLP disease classification) ──────────────────────────
         self.tokenizer = None
         self.distilbert_model = None
@@ -73,6 +79,7 @@ class HealthConsensusEngine:
             self.label_encoder = joblib.load(ENCODER_PATH)
             print(f"[OK] DistilBERT loaded from '{DISTILBERT_PATH}'")
         except Exception as e:
+            self.distilbert_error = f"{type(e).__name__}: {e}"
             print(f"[WARN] DistilBERT not loaded — falling back to rule-based NLP. ({e})")
 
         # ── XGBoost (ESI acuity classifier, native JSON format) ──────────────
@@ -82,6 +89,7 @@ class HealthConsensusEngine:
             self.xgb_model.load_model(SEVERITY_MODEL_PATH)
             print(f"[OK] XGBoost loaded from '{SEVERITY_MODEL_PATH}'")
         except Exception as e:
+            self.xgb_error = f"{type(e).__name__}: {e}"
             print(f"[WARN] XGBoost not loaded — falling back to rule-based acuity. ({e})")
 
         # ── LightGBM (binary risk classifier → ICU risk probability) ─────────
@@ -90,6 +98,7 @@ class HealthConsensusEngine:
             self.lgb_model = joblib.load(RISK_MODEL_PATH)
             print(f"[OK] LightGBM loaded from '{RISK_MODEL_PATH}'")
         except Exception as e:
+            self.lgb_error = f"{type(e).__name__}: {e}"
             print(f"[WARN] LightGBM not loaded — falling back to rule-based risk. ({e})")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -422,6 +431,11 @@ def read_root():
             "distilbert": engine.distilbert_model is not None,
             "xgboost": engine.xgb_model is not None,
             "lightgbm": engine.lgb_model is not None,
+        },
+        "model_errors": {
+            "distilbert": engine.distilbert_error,
+            "xgboost": engine.xgb_error,
+            "lightgbm": engine.lgb_error,
         },
         "supabase_connected": supabase is not None,
     }
