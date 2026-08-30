@@ -3,3 +3,5 @@ __pycache__/
 medvision_guard.db
 .env
 .env.*
+*.csv
+*.sql

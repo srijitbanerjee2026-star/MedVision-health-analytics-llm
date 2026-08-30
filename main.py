@@ -442,7 +442,7 @@ def score_disease_probabilities(spo2: float, heart_rate: float, systolic_bp: flo
 
 
 def generate_care_plan(risk_score: float, age: int) -> dict:
-    """Ported from New/train_risk_model.py's generate_recommendation()."""
+    """Ported from scripts/train_risk_model.py's generate_recommendation()."""
     if risk_score >= 85:
         recommendation = ["Immediate senior clinical review", "Continuous monitoring", "ICU evaluation"]
         estimated_stay = "5-7+ days" if age >= 75 else "4-6 days" if age >= 60 else "3-5 days"
@@ -517,7 +517,7 @@ def score_severity_ml(vitals: VitalsInput) -> dict | None:
     x = np.array([[feature_values[col] for col in FEATURE_COLS]], dtype=np.float32)
     proba = engine.xgb_model.predict_proba(x)[0]
     predicted_class = int(np.argmax(proba))
-    # train_xgboost.py labels classes as (raw_acuity 1-5) -> LabelEncoder ->
+    # scripts/train_xgboost.py labels classes as (raw_acuity 1-5) -> LabelEncoder ->
     # contiguous 0-4 in ascending order, so class index + 1 recovers the 1-5
     # inverted-acuity scale (5 = most severe), same convention as SEVERITY_MAP.
     level = predicted_class + 1
