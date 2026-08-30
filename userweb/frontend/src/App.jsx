@@ -114,8 +114,31 @@ const initialForm = {
   spo2: 98,
   heartRate: 75,
   systolicBp: 120,
+  diastolicBp: 80,
+  respRate: 16,
+  temp: 37.0,
+  painScore: 0,
+  histAsthma: false,
+  histDiabetes: false,
+  histHypertension: false,
+  histCad: false,
+  histStroke: false,
   findings: "",
 };
+
+const HISTORY_FIELDS = [
+  { key: "histAsthma", label: "Asthma" },
+  { key: "histDiabetes", label: "Diabetes" },
+  { key: "histHypertension", label: "Hypertension" },
+  { key: "histCad", label: "Coronary artery disease" },
+  { key: "histStroke", label: "Prior stroke" },
+];
+
+const FORM_STEPS = [
+  { title: "Core vitals", sub: "The essentials for a fast triage read" },
+  { title: "Additional vitals", sub: "Fills in the full risk picture" },
+  { title: "History & findings", sub: "Last step before analysis" },
+];
 
 export default function App() {
   const [healthy, setHealthy] = useState(false);
@@ -125,6 +148,7 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [tab, setTab] = useState("criticality");
   const [analyzedAt, setAnalyzedAt] = useState(null);
+  const [step, setStep] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,6 +185,15 @@ export default function App() {
           spo2: Number(form.spo2),
           heart_rate: Number(form.heartRate),
           systolic_bp: Number(form.systolicBp),
+          diastolic_bp: Number(form.diastolicBp),
+          resp_rate: Number(form.respRate),
+          temp: Number(form.temp),
+          pain_score: Number(form.painScore),
+          hist_asthma: form.histAsthma,
+          hist_diabetes: form.histDiabetes,
+          hist_hypertension: form.histHypertension,
+          hist_cad: form.histCad,
+          hist_stroke: form.histStroke,
           findings: form.findings.trim(),
         }),
       });
@@ -184,6 +217,21 @@ export default function App() {
     setResult(null);
     setError("");
     setAnalyzedAt(null);
+    setStep(0);
+  }
+
+  function goNext() {
+    if (step === 0 && !form.patientId.trim()) {
+      setError("Patient ID is required.");
+      return;
+    }
+    setError("");
+    setStep((s) => Math.min(s + 1, FORM_STEPS.length - 1));
+  }
+
+  function goBack() {
+    setError("");
+    setStep((s) => Math.max(s - 1, 0));
   }
 
   const vitals = result?.parsed_vitals;
@@ -192,6 +240,8 @@ export default function App() {
   const diseaseProbabilities = result?.disease_probabilities || {};
   const rankedDiseases = Object.entries(diseaseProbabilities).sort((a, b) => b[1] - a[1]);
   const topDisease = rankedDiseases[0]?.[0];
+  const risk = result?.risk_assessment;
+  const riskColor = risk && risk.risk_score >= 70 ? "#ff3b30" : risk && risk.risk_score >= 40 ? "#b8bec7" : "#8a92a0";
 
   return (
     <div className="mvg-app">
@@ -240,74 +290,177 @@ export default function App() {
           </div>
 
           <form className="mvg-card mvg-form" onSubmit={handleSubmit}>
-            <div className="mvg-form-grid">
-              <label>
-                Patient ID
-                <input
-                  type="text"
-                  maxLength={64}
-                  value={form.patientId}
-                  onChange={(e) => updateField("patientId", e.target.value)}
-                />
-              </label>
-              <label>
-                SpO2 (%)
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  value={form.spo2}
-                  onChange={(e) => updateField("spo2", e.target.value)}
-                />
-              </label>
-              <label>
-                Systolic BP (mmHg)
-                <input
-                  type="number"
-                  min={0}
-                  max={300}
-                  step={1}
-                  value={form.systolicBp}
-                  onChange={(e) => updateField("systolicBp", e.target.value)}
-                />
-              </label>
-              <label>
-                Age (years)
-                <input
-                  type="number"
-                  min={0}
-                  max={130}
-                  step={1}
-                  value={form.age}
-                  onChange={(e) => updateField("age", e.target.value)}
-                />
-              </label>
-              <label>
-                Heart rate (bpm)
-                <input
-                  type="number"
-                  min={0}
-                  max={300}
-                  step={1}
-                  value={form.heartRate}
-                  onChange={(e) => updateField("heartRate", e.target.value)}
-                />
-              </label>
+            <div className="mvg-wizard-head">
+              <div className="mvg-wizard-steps">
+                {FORM_STEPS.map((s, i) => (
+                  <div key={s.title} className={`mvg-wizard-step${i === step ? " active" : i < step ? " done" : ""}`}>
+                    <span className="mvg-wizard-dot">{i < step ? "✓" : i + 1}</span>
+                    {s.title}
+                  </div>
+                ))}
+              </div>
+              <div className="mvg-wizard-sub">{FORM_STEPS[step].sub}</div>
             </div>
-            <label className="mvg-findings-label">
-              Clinical findings (optional)
-              <textarea
-                maxLength={4000}
-                rows={3}
-                value={form.findings}
-                onChange={(e) => updateField("findings", e.target.value)}
-              />
-            </label>
+
+            {step === 0 && (
+              <div className="mvg-form-grid mvg-tab-panel" key="step-0">
+                <label>
+                  Patient ID
+                  <input
+                    type="text"
+                    maxLength={64}
+                    autoFocus
+                    value={form.patientId}
+                    onChange={(e) => updateField("patientId", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Age (years)
+                  <input
+                    type="number"
+                    min={0}
+                    max={130}
+                    step={1}
+                    value={form.age}
+                    onChange={(e) => updateField("age", e.target.value)}
+                  />
+                </label>
+                <label>
+                  SpO2 (%)
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    value={form.spo2}
+                    onChange={(e) => updateField("spo2", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Heart rate (bpm)
+                  <input
+                    type="number"
+                    min={0}
+                    max={300}
+                    step={1}
+                    value={form.heartRate}
+                    onChange={(e) => updateField("heartRate", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Systolic BP (mmHg)
+                  <input
+                    type="number"
+                    min={0}
+                    max={300}
+                    step={1}
+                    value={form.systolicBp}
+                    onChange={(e) => updateField("systolicBp", e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+
+            {step === 1 && (
+              <div className="mvg-form-grid mvg-tab-panel" key="step-1">
+                <label>
+                  Diastolic BP (mmHg)
+                  <input
+                    type="number"
+                    min={0}
+                    max={200}
+                    step={1}
+                    value={form.diastolicBp}
+                    onChange={(e) => updateField("diastolicBp", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Respiratory rate (breaths/min)
+                  <input
+                    type="number"
+                    min={0}
+                    max={80}
+                    step={1}
+                    value={form.respRate}
+                    onChange={(e) => updateField("respRate", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Temperature (&deg;C)
+                  <input
+                    type="number"
+                    min={30}
+                    max={45}
+                    step={0.1}
+                    value={form.temp}
+                    onChange={(e) => updateField("temp", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Pain score (0-10)
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={1}
+                    value={form.painScore}
+                    onChange={(e) => updateField("painScore", e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+
+            {step === 2 && (
+              <div className="mvg-tab-panel" key="step-2">
+                <label className="mvg-history-label">
+                  Medical history
+                  <div className="mvg-history-grid">
+                    {HISTORY_FIELDS.map(({ key, label }) => (
+                      <label className="mvg-checkbox" key={key}>
+                        <input
+                          type="checkbox"
+                          checked={form[key]}
+                          onChange={(e) => updateField(key, e.target.checked)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </label>
+                <label className="mvg-findings-label">
+                  Clinical findings (optional)
+                  <textarea
+                    maxLength={4000}
+                    rows={3}
+                    value={form.findings}
+                    onChange={(e) => updateField("findings", e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+
             {error && <div className="mvg-error">{error}</div>}
-            <button type="submit" className="mvg-btn-primary" disabled={submitting}>
-              {submitting ? "Analyzing..." : "Analyze vitals"}
-            </button>
+
+            <div className="mvg-wizard-nav">
+              <button
+                type="button"
+                className="mvg-btn-secondary"
+                onClick={goBack}
+                disabled={step === 0}
+                style={{ visibility: step === 0 ? "hidden" : "visible" }}
+              >
+                Back
+              </button>
+              {step < FORM_STEPS.length - 1 ? (
+                <button type="button" className="mvg-btn-primary" onClick={goNext}>
+                  Next
+                </button>
+              ) : (
+                <button type="submit" className="mvg-btn-primary" disabled={submitting}>
+                  {submitting ? "Analyzing..." : "Analyze vitals"}
+                </button>
+              )}
+            </div>
           </form>
 
           {!result && (
@@ -404,40 +557,30 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="mvg-outlook-row">
-                  <div className="mvg-card mvg-urgency-card">
-                    <div className="mvg-card-label">How urgent this is</div>
-                    <div className="mvg-ring-wrap-horizontal">
-                      <SeverityRing level={severityLevel} color={severityColor} size={118} />
-                      <div className="mvg-severity-info">
-                        <div className="mvg-severity-text-lg" style={{ color: severityColor }}>
-                          {severityLabel}
-                        </div>
-                        <div className="mvg-severity-sub">Level {severityLevel ?? "—"} of 5</div>
-                      </div>
-                    </div>
-                    <p className="mvg-plain-text">{banner.body}</p>
+                <div className="mvg-card mvg-diagnosis-hero">
+                  <div className="mvg-card-label">Predicted Diagnosis</div>
+                  <div className="mvg-hero-disease" style={{ color: severityColor }}>
+                    {topDisease || "—"}
                   </div>
-
-                  <div className="mvg-card mvg-scan-card">
-                    <div className="mvg-card-label">What the scan shows</div>
-                    <div className="mvg-scan-headline">{scanHeadline}</div>
-                    <p className="mvg-plain-text">
-                      This reading comes only from the vitals you entered — a clinician needs to confirm with an
-                      exam and further tests.
-                    </p>
-                    <div className="mvg-scan-source">
-                      <div className="mvg-card-label">The same thing, in your report</div>
-                      <div className="mvg-snippet">
-                        {vitals.findings || "No clinical findings were entered for this patient."}
-                      </div>
+                  <div className="mvg-hero-confidence">
+                    {((rankedDiseases[0]?.[1] || 0) * 100).toFixed(1)}% model confidence
+                  </div>
+                  <p className="mvg-plain-text">{scanHeadline}</p>
+                  <p className="mvg-plain-text">
+                    This reading comes only from the vitals you entered — a clinician needs to confirm with an exam
+                    and further tests.
+                  </p>
+                  <div className="mvg-scan-source">
+                    <div className="mvg-card-label">The same thing, in your report</div>
+                    <div className="mvg-snippet">
+                      {vitals.findings || "No clinical findings were entered for this patient."}
                     </div>
                   </div>
                 </div>
 
                 <div className="mvg-card">
                   <div className="mvg-report-match-head">
-                    <div className="mvg-card-label">What your report most looks like</div>
+                    <div className="mvg-card-label">Full probability breakdown</div>
                     <div className="mvg-muted-text">A doctor confirms the diagnosis, not the computer.</div>
                   </div>
                   {rankedDiseases.length === 0 ? (
@@ -473,6 +616,50 @@ export default function App() {
                   )}
                 </div>
 
+                {risk && (
+                  <div className="mvg-card mvg-risk-card">
+                    <div className="mvg-report-match-head">
+                      <div className="mvg-card-label">AI Risk Assessment</div>
+                      <div className="mvg-muted-text">From the trained risk model, not a clinician.</div>
+                    </div>
+                    <div className="mvg-risk-row">
+                      <div className="mvg-risk-score" style={{ color: riskColor }}>
+                        {risk.risk_score.toFixed(1)}
+                        <span className="mvg-risk-score-unit">%</span>
+                      </div>
+                      <div className="mvg-risk-track">
+                        <div
+                          className="mvg-risk-fill"
+                          style={{
+                            "--mvg-bar-target": `${risk.risk_score}%`,
+                            width: `${risk.risk_score}%`,
+                            background: riskColor,
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="mvg-risk-meta">
+                      <div className="mvg-risk-meta-item">
+                        <div className="mvg-vital-name">Disposition</div>
+                        <div className="mvg-vital-value">{risk.disposition}</div>
+                      </div>
+                      <div className="mvg-risk-meta-item">
+                        <div className="mvg-vital-name">Monitoring</div>
+                        <div className="mvg-vital-value">{risk.monitoring}</div>
+                      </div>
+                      <div className="mvg-risk-meta-item">
+                        <div className="mvg-vital-name">Estimated stay</div>
+                        <div className="mvg-vital-value">{risk.estimated_stay}</div>
+                      </div>
+                    </div>
+                    <ul className="mvg-risk-recommendation">
+                      {risk.recommendation.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 <div className="mvg-outlook-row">
                   <div className="mvg-card">
                     <div className="mvg-card-label">Your numbers</div>
@@ -497,23 +684,26 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="mvg-card mvg-locked-card">
-                    <div className="mvg-card-label">Long-term outlook</div>
-                    <div className="mvg-locked-row">
-                      <div className="mvg-vital-name">5-year outlook</div>
-                      <div className="mvg-muted-text">Locked</div>
-                    </div>
-                    <div className="mvg-locked-row">
-                      <div className="mvg-vital-name">Expected recovery time</div>
-                      <div className="mvg-muted-text">Locked</div>
-                    </div>
-                    <p className="mvg-lock-note">
-                      Long-term outlook needs a clinician's review and isn't generated automatically from vitals
-                      alone.
-                    </p>
-                    <button type="button" className="mvg-btn-secondary mvg-lock-btn" disabled>
-                      Request outlook from care team
-                    </button>
+                  <div className="mvg-card mvg-stay-card">
+                    <div className="mvg-card-label">Recommended Hospital Stay</div>
+                    {risk ? (
+                      <>
+                        <div className="mvg-stay-duration">{risk.estimated_stay}</div>
+                        <div className="mvg-vital-row mvg-vital-row-inline">
+                          <div className="mvg-vital-name">Disposition</div>
+                          <div className="mvg-vital-value-inline">{risk.disposition}</div>
+                        </div>
+                        <div className="mvg-vital-row mvg-vital-row-inline">
+                          <div className="mvg-vital-name">Monitoring frequency</div>
+                          <div className="mvg-vital-value-inline">{risk.monitoring}</div>
+                        </div>
+                        <p className="mvg-lock-note">
+                          From the trained risk model, based on age and vitals — a clinician makes the final call.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="mvg-muted-text">Risk model unavailable — no stay estimate to show.</p>
+                    )}
                   </div>
                 </div>
 
