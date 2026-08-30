@@ -98,125 +98,173 @@ class HealthConsensusEngine:
             return "TRAUMA"
         return "GENERAL TRIAGE"
 
+    # Flat, order-independent condition list — every entry is checked against
+    # every complaint regardless of category, and the entry with the MOST
+    # matching keywords wins (ties broken by list order below). The previous
+    # version nested these under a per-category "or" gate and returned on the
+    # first category whose broad, single-keyword trigger matched (e.g. any
+    # mention of "chest" routed straight into Cardiovascular, "breath"
+    # anywhere — including inside "breathing" — routed into Pulmonary), so a
+    # complaint could never reach a more specific, correct condition in a
+    # later-checked category. See: an appendicitis complaint ("right lower
+    # quadrant", "rebound") fell through to the generic fallback because it
+    # never said "abdomen"/"stomach"; a DKA complaint ("fruity breath...")
+    # got diagnosed as generic Pulmonary distress because "breathing"
+    # contains "breath"; a PE complaint got diagnosed as Pericarditis because
+    # both share the keyword "pleuritic" but Cardiovascular was checked first.
+    _CONDITIONS = [
+        # ── CARDIOVASCULAR ──────────────────────────────────────────
+        (["crushing", "retrosternal", "arm", "jaw", "diaphoresis", "substernal"],
+         "Acute Coronary Syndrome (STEMI / NSTEMI)", 0.94, "CARDIOVASCULAR"),
+        (["tearing", "back", "shoulder blades", "aortic"],
+         "Acute Aortic Dissection", 0.92, "CARDIOVASCULAR"),
+        (["palpitation", "rapid heartbeat", "rapid heart rate", "racing heart", "irregular heartbeat", "flutter"],
+         "Supraventricular / Atrial Arrhythmia", 0.88, "CARDIOVASCULAR"),
+        (["edema", "orthopnea", "nocturnal", "swelling"],
+         "Decompensated Congestive Heart Failure", 0.89, "CARDIOVASCULAR"),
+        (["pleuritic", "leaning forward", "pericard"],
+         "Acute Pericarditis", 0.86, "CARDIOVASCULAR"),
+        (["bradycardia", "dizziness", "faint", "syncope"],
+         "Symptomatic Bradycardia / AV Block", 0.91, "CARDIOVASCULAR"),
+        (["calf", "dvt", "flight", "leg swelling"],
+         "Deep Vein Thrombosis (DVT)", 0.87, "CARDIOVASCULAR"),
+        (["pulseless", "cold", "pale leg", "ischemia"],
+         "Acute Peripheral Arterial Occlusion", 0.93, "CARDIOVASCULAR"),
+
+        # ── PULMONARY ───────────────────────────────────────────────
+        (["stridor", "peanut", "throat tightness", "swelling", "anaphylaxis"],
+         "Acute Anaphylaxis / Airway Compromise", 0.96, "PULMONARY"),
+        (["hemoptysis", "coughing up blood", "pleuritic", "sudden dyspnea", "sudden onset dyspnea"],
+         "Acute Pulmonary Embolism", 0.93, "PULMONARY"),
+        (["wheez", "asthma", "unable to speak"],
+         "Acute Severe Asthma Exacerbation", 0.92, "PULMONARY"),
+        (["rust", "fever", "productive", "sputum"],
+         "Community-Acquired Bacterial Pneumonia", 0.90, "PULMONARY"),
+        (["unilateral", "tall", "slim", "pneumothorax"],
+         "Spontaneous Pneumothorax", 0.89, "PULMONARY"),
+        (["copd", "smoker", "purulence"],
+         "Acute Exacerbation of COPD", 0.91, "PULMONARY"),
+        (["night sweats", "bloody streaks", "weight loss"],
+         "Pulmonary Tuberculosis / Chronic Cavitary Infection", 0.88, "PULMONARY"),
+        (["foreign body", "choking", "barking"],
+         "Foreign Body Airway Obstruction", 0.94, "PULMONARY"),
+        (["rhinorrhea", "sore throat", "runny"],
+         "Upper Respiratory Tract Infection (URTI)", 0.95, "PULMONARY"),
+
+        # ── NEUROLOGICAL ────────────────────────────────────────────
+        (["facial drooping", "arm weakness", "slurred", "speech"],
+         "Acute Ischemic Stroke (CVA)", 0.97, "NEUROLOGICAL"),
+        (["thunderclap", "worst headache", "neck stiffness"],
+         "Subarachnoid Hemorrhage (SAH)", 0.95, "NEUROLOGICAL"),
+        (["tonic-clonic", "seizure", "convulsion"],
+         "Status Epilepticus / Generalized Seizure", 0.94, "NEUROLOGICAL"),
+        (["kernig", "photophobia", "mening"],
+         "Acute Bacterial Meningitis", 0.93, "NEUROLOGICAL"),
+        (["ascending", "weakness", "numbness"],
+         "Guillain-Barré Syndrome", 0.87, "NEUROLOGICAL"),
+        (["asterixis", "liver failure", "cirrhosis"],
+         "Hepatic Encephalopathy", 0.89, "NEUROLOGICAL"),
+        (["vertigo", "nystagmus", "rotary"],
+         "Benign Paroxysmal Positional Vertigo (BPPV)", 0.90, "NEUROLOGICAL"),
+        (["facial nerve", "forehead", "bell"],
+         "Bell's Palsy (Peripheral Facial Neuropathy)", 0.91, "NEUROLOGICAL"),
+        (["throbbing", "unilateral headache", "aura"],
+         "Acute Migraine with Photophobia", 0.92, "NEUROLOGICAL"),
+        (["tension", "band-like", "workday"],
+         "Tension-Type Headache", 0.94, "NEUROLOGICAL"),
+
+        # ── GASTROINTESTINAL ────────────────────────────────────────
+        (["right lower quadrant", "rebound", "appendix"],
+         "Acute Appendicitis", 0.95, "GASTROINTESTINAL"),
+        (["hematemesis", "melena", "coffee ground"],
+         "Upper Gastrointestinal Bleed", 0.94, "GASTROINTESTINAL"),
+        (["epigastric", "radiating to back", "pancrea"],
+         "Acute Pancreatitis", 0.92, "GASTROINTESTINAL"),
+        (["murphy", "fatty meal", "right upper quadrant", "cholecyst"],
+         "Acute Cholecystitis / Biliary Colic", 0.91, "GASTROINTESTINAL"),
+        (["distension", "bilious", "obstipation", "obstruction"],
+         "Acute Mechanical Bowel Obstruction", 0.93, "GASTROINTESTINAL"),
+        (["left lower quadrant", "diverticul"],
+         "Acute Diverticulitis", 0.90, "GASTROINTESTINAL"),
+        (["jaundice", "clay-colored", "dark urine"],
+         "Obstructive Jaundice / Cholangitis", 0.89, "GASTROINTESTINAL"),
+        (["hematochezia", "bright red", "rectal"],
+         "Lower Gastrointestinal Bleed", 0.91, "GASTROINTESTINAL"),
+        (["diarrhea", "street food", "cramping"],
+         "Acute Infectious Gastroenteritis", 0.94, "GASTROINTESTINAL"),
+        (["pyrosis", "reflux", "regurgitation"],
+         "Gastroesophageal Reflux Disease (GERD)", 0.92, "GASTROINTESTINAL"),
+
+        # ── TRAUMA & ACUTE EMERGENCIES ──────────────────────────────
+        (["collision", "steering wheel", "deformed"],
+         "Polytrauma with Suspected Femur Fracture", 0.96, "TRAUMA"),
+        (["pulsatile", "arterial", "laceration", "bleed"],
+         "Major Arterial Vascular Injury", 0.95, "TRAUMA"),
+        (["burn", "body surface area"],
+         "Severe Thermal Burn Injury", 0.97, "TRAUMA"),
+        (["septic", "purpuric", "obtunded"],
+         "Septic Shock / Disseminated Meningococcemia", 0.98, "TRAUMA"),
+        (["flank", "groin", "hematuria", "calculus", "stone"],
+         "Acute Nephrolithiasis (Renal Colic)", 0.93, "TRAUMA"),
+        (["kussmaul", "fruity", "ketoacidosis"],
+         "Diabetic Ketoacidosis (DKA)", 0.96, "TRAUMA"),
+        (["torsion", "scrotal", "testicular"],
+         "Acute Testicular Torsion (Surgical Emergency)", 0.97, "TRAUMA"),
+        (["ankle", "twisted", "sprain"],
+         "Acute Ankle Ligament Sprain", 0.94, "TRAUMA"),
+        (["paper cut"],
+         "Superficial Cutaneous Abrasion", 0.99, "TRAUMA"),
+        (["conjunctivitis", "itchy", "watery eyes"],
+         "Allergic Conjunctivitis", 0.95, "TRAUMA"),
+    ]
+
+    # How many conditions above list each keyword — used to down-weight
+    # keywords shared across conditions (see predict_nlp_disease).
+    _KEYWORD_FREQUENCY: Dict[str, int] = {}
+    for _keywords, *_rest in _CONDITIONS:
+        for _kw in _keywords:
+            _KEYWORD_FREQUENCY[_kw] = _KEYWORD_FREQUENCY.get(_kw, 0) + 1
+    del _keywords, _rest, _kw
+
+    # Generic per-subsystem fallback used only when no specific condition
+    # above matched, but identify_subsystem() still recognized a broad
+    # category keyword (e.g. "chest" with nothing more specific).
+    _SUBSYSTEM_FALLBACK = {
+        "CARDIOVASCULAR": ("Acute Coronary Syndrome", 0.85),
+        "PULMONARY": ("Acute Respiratory Distress", 0.86),
+        "NEUROLOGICAL": ("Acute Neurological Deficit", 0.85),
+        "GASTROINTESTINAL": ("Acute Abdominal Pathology", 0.85),
+        "TRAUMA": ("Acute Trauma / Hemorrhage", 0.88),
+    }
+
     # ── Subsystem-Aware Clinical Pattern NLP Classifier ───────────────────────
     def predict_nlp_disease(self, complaint_text: str) -> Tuple[str, float, str]:
-        """Classifies clinical condition across multi-organ specialties."""
-        subsystem = self.identify_subsystem(complaint_text)
+        """Classifies clinical condition across multi-organ specialties.
+
+        Scores every known condition by how many of its keywords appear in
+        the complaint and returns the best match, rather than gating checks
+        behind a single-keyword category guess (see _CONDITIONS docstring)."""
         t = complaint_text.lower()
 
-        # ── 1. CARDIOVASCULAR ─────────────────────────────────────────
-        if subsystem == "CARDIOVASCULAR" or any(k in t for k in ["chest", "angina", "palpitation", "heart", "bradycardia", "tachycardia"]):
-            if any(k in t for k in ["crushing", "retrosternal", "arm", "jaw", "diaphoresis", "substernal"]):
-                return "Acute Coronary Syndrome (STEMI / NSTEMI)", 0.94, "CARDIOVASCULAR"
-            if any(k in t for k in ["tearing", "back", "shoulder blades", "aortic"]):
-                return "Acute Aortic Dissection", 0.92, "CARDIOVASCULAR"
-            if any(k in t for k in ["palpitation", "rapid", "irregular", "flutter"]):
-                return "Supraventricular / Atrial Arrhythmia", 0.88, "CARDIOVASCULAR"
-            if any(k in t for k in ["edema", "orthopnea", "nocturnal", "swelling"]):
-                return "Decompensated Congestive Heart Failure", 0.89, "CARDIOVASCULAR"
-            if any(k in t for k in ["pleuritic", "leaning forward", "pericard"]):
-                return "Acute Pericarditis", 0.86, "CARDIOVASCULAR"
-            if any(k in t for k in ["bradycardia", "dizziness", "faint", "syncope"]):
-                return "Symptomatic Bradycardia / AV Block", 0.91, "CARDIOVASCULAR"
-            if any(k in t for k in ["calf", "dvt", "flight", "leg swelling"]):
-                return "Deep Vein Thrombosis (DVT)", 0.87, "CARDIOVASCULAR"
-            if any(k in t for k in ["pulseless", "cold", "pale leg", "ischemia"]):
-                return "Acute Peripheral Arterial Occlusion", 0.93, "CARDIOVASCULAR"
-            return "Acute Coronary Syndrome", 0.85, "CARDIOVASCULAR"
+        # Weight each keyword match by 1/(number of conditions it appears in)
+        # so a keyword shared across conditions (e.g. "pleuritic" appearing
+        # for both Pericarditis and Pulmonary Embolism) can't single-handedly
+        # win a match the way a keyword unique to one condition can.
+        best_match = None
+        best_score = 0.0
+        for keywords, condition, confidence, subsystem in self._CONDITIONS:
+            score = sum(1.0 / self._KEYWORD_FREQUENCY.get(k, 1) for k in keywords if k in t)
+            if score > best_score:
+                best_score = score
+                best_match = (condition, confidence, subsystem)
 
-        # ── 2. PULMONARY ──────────────────────────────────────────────
-        if subsystem == "PULMONARY" or any(k in t for k in ["breath", "dyspnea", "wheez", "cough", "sputum", "stridor", "choking", "hemoptysis"]):
-            if any(k in t for k in ["stridor", "peanut", "throat tightness", "swelling", "anaphylaxis"]):
-                return "Acute Anaphylaxis / Airway Compromise", 0.96, "PULMONARY"
-            if any(k in t for k in ["hemoptysis", "pleuritic", "sudden dyspnea"]):
-                return "Acute Pulmonary Embolism", 0.93, "PULMONARY"
-            if any(k in t for k in ["wheez", "asthma", "unable to speak"]):
-                return "Acute Severe Asthma Exacerbation", 0.92, "PULMONARY"
-            if any(k in t for k in ["rust", "fever", "productive", "sputum"]):
-                return "Community-Acquired Bacterial Pneumonia", 0.90, "PULMONARY"
-            if any(k in t for k in ["unilateral", "tall", "slim", "pneumothorax"]):
-                return "Spontaneous Pneumothorax", 0.89, "PULMONARY"
-            if any(k in t for k in ["copd", "smoker", "purulence"]):
-                return "Acute Exacerbation of COPD", 0.91, "PULMONARY"
-            if any(k in t for k in ["night sweats", "bloody streaks", "weight loss"]):
-                return "Pulmonary Tuberculosis / Chronic Cavitary Infection", 0.88, "PULMONARY"
-            if any(k in t for k in ["foreign body", "choking", "barking"]):
-                return "Foreign Body Airway Obstruction", 0.94, "PULMONARY"
-            if any(k in t for k in ["rhinorrhea", "sore throat", "runny"]):
-                return "Upper Respiratory Tract Infection (URTI)", 0.95, "PULMONARY"
-            return "Acute Respiratory Distress", 0.86, "PULMONARY"
+        if best_match:
+            return best_match
 
-        # ── 3. NEUROLOGICAL ───────────────────────────────────────────
-        if subsystem == "NEUROLOGICAL" or any(k in t for k in ["headache", "droop", "slurred", "weakness", "seizure", "numb", "dizzy", "vertigo", "kernig"]):
-            if any(k in t for k in ["facial drooping", "arm weakness", "slurred", "speech"]):
-                return "Acute Ischemic Stroke (CVA)", 0.97, "NEUROLOGICAL"
-            if any(k in t for k in ["thunderclap", "worst headache", "neck stiffness"]):
-                return "Subarachnoid Hemorrhage (SAH)", 0.95, "NEUROLOGICAL"
-            if any(k in t for k in ["tonic-clonic", "seizure", "convulsion"]):
-                return "Status Epilepticus / Generalized Seizure", 0.94, "NEUROLOGICAL"
-            if any(k in t for k in ["kernig", "photophobia", "mening"]):
-                return "Acute Bacterial Meningitis", 0.93, "NEUROLOGICAL"
-            if any(k in t for k in ["ascending", "weakness", "numbness"]):
-                return "Guillain-Barré Syndrome", 0.87, "NEUROLOGICAL"
-            if any(k in t for k in ["asterixis", "confusion", "liver"]):
-                return "Hepatic Encephalopathy", 0.89, "NEUROLOGICAL"
-            if any(k in t for k in ["vertigo", "nystagmus", "rotary"]):
-                return "Benign Paroxysmal Positional Vertigo (BPPV)", 0.90, "NEUROLOGICAL"
-            if any(k in t for k in ["facial nerve", "forehead", "bell"]):
-                return "Bell's Palsy (Peripheral Facial Neuropathy)", 0.91, "NEUROLOGICAL"
-            if any(k in t for k in ["throbbing", "unilateral headache", "aura"]):
-                return "Acute Migraine with Photophobia", 0.92, "NEUROLOGICAL"
-            if any(k in t for k in ["tension", "band-like", "workday"]):
-                return "Tension-Type Headache", 0.94, "NEUROLOGICAL"
-            return "Acute Neurological Deficit", 0.85, "NEUROLOGICAL"
-
-        # ── 4. GASTROINTESTINAL ───────────────────────────────────────
-        if subsystem == "GASTROINTESTINAL" or any(k in t for k in ["abdomen", "vomit", "hematemesis", "diarrhea", "jaundice", "epigastric", "murphy"]):
-            if any(k in t for k in ["right lower quadrant", "rebound", "appendix"]):
-                return "Acute Appendicitis", 0.95, "GASTROINTESTINAL"
-            if any(k in t for k in ["hematemesis", "melena", "coffee ground"]):
-                return "Upper Gastrointestinal Bleed", 0.94, "GASTROINTESTINAL"
-            if any(k in t for k in ["epigastric", "radiating to back", "pancrea"]):
-                return "Acute Pancreatitis", 0.92, "GASTROINTESTINAL"
-            if any(k in t for k in ["murphy", "fatty meal", "right upper quadrant", "cholecyst"]):
-                return "Acute Cholecystitis / Biliary Colic", 0.91, "GASTROINTESTINAL"
-            if any(k in t for k in ["distension", "bilious", "obstipation", "obstruction"]):
-                return "Acute Mechanical Bowel Obstruction", 0.93, "GASTROINTESTINAL"
-            if any(k in t for k in ["left lower quadrant", "diverticul"]):
-                return "Acute Diverticulitis", 0.90, "GASTROINTESTINAL"
-            if any(k in t for k in ["jaundice", "clay-colored", "dark urine"]):
-                return "Obstructive Jaundice / Cholangitis", 0.89, "GASTROINTESTINAL"
-            if any(k in t for k in ["hematochezia", "bright red", "rectal"]):
-                return "Lower Gastrointestinal Bleed", 0.91, "GASTROINTESTINAL"
-            if any(k in t for k in ["diarrhea", "street food", "cramping"]):
-                return "Acute Infectious Gastroenteritis", 0.94, "GASTROINTESTINAL"
-            if any(k in t for k in ["pyrosis", "reflux", "regurgitation"]):
-                return "Gastroesophageal Reflux Disease (GERD)", 0.92, "GASTROINTESTINAL"
-            return "Acute Abdominal Pathology", 0.85, "GASTROINTESTINAL"
-
-        # ── 5. TRAUMA & ACUTE EMERGENCIES ─────────────────────────────
-        if subsystem == "TRAUMA" or any(k in t for k in ["accident", "burn", "laceration", "flank", "paper cut", "ankle", "torsion", "ketoacidosis", "septic"]):
-            if any(k in t for k in ["collision", "steering wheel", "deformed"]):
-                return "Polytrauma with Suspected Femur Fracture", 0.96, "TRAUMA"
-            if any(k in t for k in ["pulsatile", "arterial", "laceration", "bleed"]):
-                return "Major Arterial Vascular Injury", 0.95, "TRAUMA"
-            if any(k in t for k in ["burn", "body surface area"]):
-                return "Severe Thermal Burn Injury", 0.97, "TRAUMA"
-            if any(k in t for k in ["septic", "purpuric", "obtunded"]):
-                return "Septic Shock / Disseminated Meningococcemia", 0.98, "TRAUMA"
-            if any(k in t for k in ["flank", "groin", "hematuria", "calculus", "stone"]):
-                return "Acute Nephrolithiasis (Renal Colic)", 0.93, "TRAUMA"
-            if any(k in t for k in ["kussmaul", "fruity", "ketoacidosis"]):
-                return "Diabetic Ketoacidosis (DKA)", 0.96, "TRAUMA"
-            if any(k in t for k in ["torsion", "scrotal", "testicular"]):
-                return "Acute Testicular Torsion (Surgical Emergency)", 0.97, "TRAUMA"
-            if any(k in t for k in ["ankle", "twisted", "sprain"]):
-                return "Acute Ankle Ligament Sprain", 0.94, "TRAUMA"
-            if any(k in t for k in ["paper cut"]):
-                return "Superficial Cutaneous Abrasion", 0.99, "TRAUMA"
-            if any(k in t for k in ["conjunctivitis", "itchy", "watery eyes"]):
-                return "Allergic Conjunctivitis", 0.95, "TRAUMA"
-            return "Acute Trauma / Hemorrhage", 0.88, "TRAUMA"
+        subsystem = self.identify_subsystem(complaint_text)
+        if subsystem in self._SUBSYSTEM_FALLBACK:
+            condition, confidence = self._SUBSYSTEM_FALLBACK[subsystem]
+            return condition, confidence, subsystem
 
         return "Acute Undifferentiated Febrile Illness", 0.82, "GENERAL TRIAGE"
 
