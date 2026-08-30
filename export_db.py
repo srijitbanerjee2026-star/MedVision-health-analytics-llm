@@ -1,12 +1,12 @@
-
 import mysql.connector
 
 MYSQL_CONFIG = {
     "host": "localhost",
     "user": "root",
-    "password": "user67",  
-    "database": "medvision"
+    "password": "user67",
+    "database": "medvision",
 }
+
 
 def export_to_sql():
     print("[INFO] Connecting to 'medvision' database...")
@@ -49,7 +49,7 @@ def export_to_sql():
 );\n\n""")
 
         columns = list(rows[0].keys())
-       
+
         if "visit_id" in columns:
             columns.remove("visit_id")
 
@@ -70,6 +70,7 @@ def export_to_sql():
             f.write(f"INSERT INTO patient_records ({cols_str}) VALUES ({val_str});\n")
 
     print("[SUCCESS] Export complete! Created 'medvision_full.sql'.")
+
 
 if __name__ == "__main__":
     export_to_sql()

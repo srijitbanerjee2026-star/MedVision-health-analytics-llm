@@ -88,7 +88,7 @@ def fetch_patient_data() -> pd.DataFrame:
             SELECT
                 {", ".join(FEATURE_COLS)},
                 {TARGET_COL}
-            FROM patient_records
+            FROM patient_records_500
         """
 
         df = pd.read_sql(query, conn)
