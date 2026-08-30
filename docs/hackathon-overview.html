@@ -1,0 +1,809 @@
+<meta charset="utf-8">
+<title>MedVision Guard</title>
+
+<style>
+:root {
+  --bg: #0b0f17;
+  --surface: #10141c;
+  --surface-raised: #161c27;
+  --ink: #f5f6f7;
+  --muted: #8a92a0;
+  --faint: #5b6270;
+  --line: rgba(255,255,255,0.09);
+  --line-strong: rgba(255,255,255,0.16);
+  --critical: #ff3b30;
+  --positive: #3fb950;
+  --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+}
+
+a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line-strong); }
+a:hover { border-color: var(--ink); }
+
+::selection { background: rgba(255,59,48,0.3); }
+
+/* ===== layout shell ===== */
+
+.page {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .page { grid-template-columns: 1fr; }
+  .toc { display: none; }
+}
+
+.toc {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  padding: 3rem 1.5rem 3rem 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.toc-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.toc-brand svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--ink); }
+
+.toc-brand-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.toc-list a {
+  display: flex;
+  gap: 0.65rem;
+  padding: 0.4rem 0;
+  border: none;
+  font-size: 0.82rem;
+  color: var(--muted);
+  transition: color 0.15s ease;
+}
+
+.toc-list a:hover { color: var(--ink); }
+
+.toc-num {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--faint);
+  padding-top: 0.1rem;
+}
+
+.toc-status {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--faint);
+  line-height: 1.7;
+}
+
+.toc-status strong { color: var(--muted); font-weight: 500; }
+
+/* ===== main column ===== */
+
+main { padding: 3rem 0 6rem; min-width: 0; }
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.eyebrow .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--positive);
+  box-shadow: 0 0 0 3px rgba(63,185,80,0.15);
+}
+
+h1 {
+  font-size: clamp(2.4rem, 5vw, 3.4rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+  margin: 0 0 1rem;
+  text-wrap: balance;
+}
+
+.hero-sub {
+  font-size: 1.1rem;
+  color: var(--muted);
+  max-width: 42rem;
+  margin: 0 0 2rem;
+  line-height: 1.55;
+}
+
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 3.5rem;
+}
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  color: var(--muted);
+}
+
+section { padding: 3.5rem 0; border-top: 1px solid var(--line); }
+section:first-of-type { border-top: none; padding-top: 0; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+.section-num {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+
+h2 {
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.prose {
+  max-width: 42rem;
+  font-size: 0.98rem;
+  color: #cfd3d9;
+}
+
+.prose p { margin: 0 0 1rem; }
+.prose p:last-child { margin-bottom: 0; }
+.prose strong { color: var(--ink); font-weight: 600; }
+
+.lede {
+  font-size: 1.05rem;
+  color: var(--ink);
+  max-width: 42rem;
+  margin: 0 0 1.5rem;
+  font-weight: 500;
+}
+
+/* ===== stat row ===== */
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 640px) { .stat-row { grid-template-columns: 1fr; } }
+
+.stat {
+  background: var(--surface);
+  padding: 1.1rem 1.25rem;
+}
+
+.stat-num {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.stat-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+/* ===== flow steps ===== */
+
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 1.5rem 0 0;
+}
+
+.flow-step {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 1rem;
+  padding: 1.1rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.flow-step:first-child { border-top: none; }
+
+.flow-index {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--faint);
+  padding-top: 0.15rem;
+}
+
+.flow-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.3rem; }
+.flow-body { font-size: 0.9rem; color: var(--muted); max-width: 38rem; line-height: 1.55; }
+
+/* ===== architecture diagram ===== */
+
+.diagram-figure { margin: 0; }
+
+.diagram-frame {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 1.5rem;
+}
+
+.diagram-frame svg { width: 100%; height: auto; display: block; }
+
+figcaption {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.75rem;
+  max-width: 42rem;
+  line-height: 1.5;
+}
+
+/* ===== stack grid ===== */
+
+.stack-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 760px) { .stack-grid { grid-template-columns: 1fr; } }
+
+.stack-card {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1.25rem 1.35rem;
+  background: var(--surface);
+}
+
+.stack-card h3 {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 0.9rem;
+}
+
+.stack-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.stack-card li {
+  font-size: 0.88rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.stack-card li span:last-child {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* ===== model cards ===== */
+
+.model-card {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 1.4rem 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.model-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.model-name { font-weight: 700; font-size: 1.05rem; }
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.22rem 0.55rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.badge-live {
+  color: var(--positive);
+  border: 1px solid rgba(63,185,80,0.35);
+  background: rgba(63,185,80,0.08);
+}
+
+.badge-demo {
+  color: #e0b400;
+  border: 1px solid rgba(255,200,0,0.4);
+  background: rgba(255,200,0,0.08);
+}
+
+.model-desc { font-size: 0.9rem; color: var(--muted); line-height: 1.55; max-width: 40rem; }
+.model-desc strong { color: #cfd3d9; font-weight: 600; }
+
+.model-meta {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.model-meta-item .k {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  margin-bottom: 0.15rem;
+}
+.model-meta-item .v { font-size: 0.85rem; color: var(--ink); }
+
+/* ===== code block ===== */
+
+.code-block {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #090c12;
+  overflow-x: auto;
+}
+
+.code-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.code-head .method { color: var(--positive); font-weight: 600; }
+
+pre {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #cfd3d9;
+  white-space: pre;
+}
+
+.tok-key { color: #8fb8ff; }
+.tok-str { color: #b8e0a0; }
+.tok-num { color: #ffb56b; }
+.tok-muted { color: var(--faint); }
+
+/* ===== mock screens ===== */
+
+.mock-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 760px) { .mock-wrap { grid-template-columns: 1fr; } }
+
+.mock-frame {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.mock-titlebar {
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mock-body { padding: 1rem; }
+
+.mock-acuity-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.9rem;
+}
+
+.mock-acuity-cell { background: var(--surface); padding: 0.5rem 0.4rem; }
+.mock-acuity-num { font-family: var(--font-mono); font-weight: 800; font-size: 1.1rem; }
+.mock-acuity-label { font-size: 0.55rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.1rem; }
+
+.mock-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.mock-row:last-child { border-bottom: none; }
+.mock-row .v { color: var(--ink); font-family: var(--font-mono); }
+
+.mock-hero { text-align: center; padding: 0.5rem 0 0.75rem; }
+.mock-hero-label { font-family: var(--font-mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); }
+.mock-hero-disease { font-weight: 800; font-size: 1.5rem; color: var(--critical); margin: 0.3rem 0; }
+.mock-hero-conf { font-family: var(--font-mono); font-size: 0.65rem; color: var(--faint); }
+
+.mock-bar-row { margin-top: 0.6rem; }
+.mock-bar-label { display: flex; justify-content: space-between; font-size: 0.68rem; margin-bottom: 0.25rem; }
+.mock-bar-track { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+.mock-bar-fill { height: 100%; background: var(--muted); }
+.mock-bar-fill.top { background: var(--ink); }
+
+/* ===== limitations list ===== */
+
+/* ===== footer ===== */
+
+footer {
+  border-top: 1px solid var(--line);
+  padding-top: 2rem;
+  margin-top: 1rem;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--faint);
+}
+</style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+
+<div class="page">
+
+<nav class="toc">
+  <div class="toc-brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2 7 4-14 2 7h8"/></svg>
+    <span class="toc-brand-name">MedVision Guard</span>
+  </div>
+  <ul class="toc-list">
+    <li><a href="#problem"><span class="toc-num">01</span>The problem</a></li>
+    <li><a href="#walkthrough"><span class="toc-num">02</span>How it works</a></li>
+    <li><a href="#architecture"><span class="toc-num">03</span>Architecture</a></li>
+    <li><a href="#stack"><span class="toc-num">04</span>Tech stack</a></li>
+    <li><a href="#models"><span class="toc-num">05</span>The AI layer</a></li>
+    <li><a href="#api"><span class="toc-num">06</span>API at a glance</a></li>
+    <li><a href="#screens"><span class="toc-num">07</span>The two screens</a></li>
+  </ul>
+  <div class="toc-status">
+    <strong>backend</strong> FastAPI, Render<br>
+    <strong>frontend</strong> React + Vite, Vercel<br>
+    <strong>updated</strong> 2026-08-30
+  </div>
+</nav>
+
+<main>
+
+  <span class="eyebrow"><span class="dot"></span>Hackathon submission — codebase walkthrough</span>
+  <h1>ER triage, read by machine, decided by clinicians.</h1>
+  <p class="hero-sub">MedVision Guard takes a patient's vitals, runs them through both hand-written clinical rules and a trained risk model, and hands the care team a triage read, a likely-diagnosis breakdown, and a recommended length of stay — in under a second, before a doctor ever opens the chart.</p>
+  <div class="hero-meta">
+    <span class="chip">FastAPI + React</span>
+    <span class="chip">LightGBM risk model</span>
+    <span class="chip">3-step intake</span>
+    <span class="chip">MIT-style ER workflow</span>
+  </div>
+
+  <section id="problem">
+    <div class="section-head"><span class="section-num">01</span><h2>The problem</h2></div>
+    <div class="prose">
+      <p>An ER intake desk sees a constant stream of patients whose vitals alone — oxygen saturation, heart rate, blood pressure, temperature — already carry most of the signal for how urgently they need to be seen. But that first read is usually a nurse doing mental math under time pressure, and it doesn't get written down anywhere structured until much later.</p>
+      <p>MedVision Guard is a fast, honest first pass: <strong>type in the vitals, get a structured triage read back immediately</strong> — acuity level, a ranked guess at what's going on, and a resource plan (admit or observe, how often to check in, how long they'll likely stay). It's built to sit in front of a clinician, not to replace one.</p>
+    </div>
+  </section>
+
+  <section id="walkthrough">
+    <div class="section-head"><span class="section-num">02</span><h2>How it works</h2></div>
+    <p class="lede">Three steps, from a blank form to a structured care plan.</p>
+    <div class="flow">
+      <div class="flow-step">
+        <span class="flow-index">1</span>
+        <div>
+          <div class="flow-title">Enter vitals, in three short screens</div>
+          <div class="flow-body">Core vitals (SpO2, heart rate, BP) first — the essentials for a fast read — then additional vitals (resp rate, temp, pain score), then medical history and free-text findings. Each step validates before letting you move on.</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <span class="flow-index">2</span>
+        <div>
+          <div class="flow-title">The backend scores it three ways</div>
+          <div class="flow-body">A rule-based triage level (1–5) and disease-probability breakdown run instantly on thresholds a clinician could sanity-check by eye. In parallel, a trained LightGBM model scores real risk from the full 13-field vector and turns that into a care plan.</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <span class="flow-index">3</span>
+        <div>
+          <div class="flow-title">One dashboard, built around the diagnosis</div>
+          <div class="flow-body">The predicted condition is the headline — not buried under a severity gauge. Everything else (probability breakdown, risk score, vitals, recommended stay) is supporting detail arranged around it.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <div class="section-head"><span class="section-num">03</span><h2>Architecture</h2></div>
+    <p class="lede">One request, one response — the backend is stateless, so the interesting part is what happens inside a single <code style="font-family:var(--font-mono); font-size:0.85em; color:var(--ink);">POST /analyze-vitals</code> call.</p>
+
+    <figure class="diagram-figure">
+      <div class="diagram-frame">
+        <svg viewBox="0 0 920 400" role="img" aria-label="A browser sends patient vitals as JSON to the FastAPI backend. The backend runs three scorers in parallel: rule-based triage and disease-probability logic with no external dependency, a real LightGBM risk model loaded from risk_model.pkl, and an XGBoost severity model loaded from severity_model.json that is trained on synthetic data and not currently surfaced in the UI. All results merge into one JSON response sent back to the browser.">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- Browser -->
+          <rect x="20" y="150" width="150" height="90" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="95" y="188" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="12" fill="currentColor" font-weight="600">Browser</text>
+          <text x="95" y="206" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="10" fill="currentColor" opacity="0.55">React + Vite</text>
+
+          <!-- request arrow -->
+          <line x1="170" y1="180" x2="278" y2="180" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <text x="224" y="170" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="10" fill="currentColor" opacity="0.7">POST /analyze-vitals</text>
+
+          <!-- FastAPI -->
+          <rect x="280" y="130" width="170" height="130" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="365" y="165" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="12" fill="currentColor" font-weight="600">FastAPI</text>
+          <text x="365" y="183" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="10" fill="currentColor" opacity="0.55">app.py</text>
+          <text x="365" y="205" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.55">VitalsInput</text>
+          <text x="365" y="220" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.55">13 fields, validated</text>
+
+          <!-- three arrows fanning out -->
+          <line x1="450" y1="150" x2="560" y2="80" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="450" y1="195" x2="560" y2="195" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="450" y1="240" x2="560" y2="320" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+          <!-- rule engine box -->
+          <rect x="565" y="35" width="200" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
+          <text x="580" y="58" font-family="'JetBrains Mono',monospace" font-size="11" fill="currentColor" font-weight="600">score_manual_vitals()</text>
+          <text x="580" y="75" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.55">threshold rules</text>
+          <text x="580" y="90" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.55">no model, no data dependency</text>
+
+          <!-- risk model box (accent - this is the real one) -->
+          <rect x="565" y="160" width="200" height="70" rx="4" fill="none" stroke="#ff3b30" stroke-width="1.8"/>
+          <text x="580" y="183" font-family="'JetBrains Mono',monospace" font-size="11" fill="#ff3b30" font-weight="700">risk_model.pkl</text>
+          <text x="580" y="200" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.7">LightGBM · trained, real</text>
+          <text x="580" y="215" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.55">predict_proba → risk_score</text>
+
+          <!-- severity model box (dashed - demo) -->
+          <rect x="565" y="285" width="200" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.6"/>
+          <text x="580" y="308" font-family="'JetBrains Mono',monospace" font-size="11" fill="currentColor" opacity="0.85" font-weight="600">severity_model.json</text>
+          <text x="580" y="325" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.55">XGBoost · synthetic data</text>
+          <text x="580" y="340" font-family="'JetBrains Mono',monospace" font-size="9" fill="currentColor" opacity="0.5">demo only, not shown in UI</text>
+
+          <!-- merge arrows back -->
+          <line x1="765" y1="70" x2="855" y2="180" stroke="currentColor" stroke-width="1.2" opacity="0.6" marker-end="url(#arrow)"/>
+          <line x1="765" y1="195" x2="855" y2="195" stroke="currentColor" stroke-width="1.2" opacity="0.6" marker-end="url(#arrow)"/>
+          <line x1="765" y1="320" x2="855" y2="210" stroke="currentColor" stroke-width="1.2" opacity="0.6" marker-end="url(#arrow)"/>
+
+          <!-- response marker -->
+          <text x="900" y="199" text-anchor="end" font-family="'JetBrains Mono',monospace" font-size="10" fill="currentColor" opacity="0.7">merged JSON</text>
+        </svg>
+      </div>
+      <figcaption>Every request fans out to three scorers inside one FastAPI call — pure threshold logic, the real trained risk model (in red, the load-bearing one), and a clearly-flagged demo model — then merges into a single response. Nothing is stateful between requests.</figcaption>
+    </figure>
+  </section>
+
+  <section id="stack">
+    <div class="section-head"><span class="section-num">04</span><h2>Tech stack</h2></div>
+    <div class="stack-grid">
+      <div class="stack-card">
+        <h3>Frontend</h3>
+        <ul>
+          <li><span>React</span><span>18.3</span></li>
+          <li><span>Vite</span><span>build + dev server</span></li>
+          <li><span>Plain CSS</span><span>no framework</span></li>
+          <li><span>Vercel</span><span>deploy target</span></li>
+        </ul>
+      </div>
+      <div class="stack-card">
+        <h3>Backend</h3>
+        <ul>
+          <li><span>FastAPI</span><span>Python</span></li>
+          <li><span>Pydantic</span><span>request validation</span></li>
+          <li><span>Uvicorn</span><span>ASGI server</span></li>
+          <li><span>Render</span><span>deploy target</span></li>
+        </ul>
+      </div>
+      <div class="stack-card">
+        <h3>ML / data</h3>
+        <ul>
+          <li><span>LightGBM</span><span>risk model</span></li>
+          <li><span>XGBoost</span><span>demo severity model</span></li>
+          <li><span>DistilBERT</span><span>findings NLP, planned</span></li>
+          <li><span>joblib</span><span>model loading</span></li>
+          <li><span>SQLite</span><span>synthetic training seed</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="models">
+    <div class="section-head"><span class="section-num">05</span><h2>The AI layer</h2></div>
+    <p class="lede">Two models exist in this repo. We're upfront in the product itself about which one is real.</p>
+
+    <div class="model-card">
+      <div class="model-head">
+        <span class="model-name">Risk model</span>
+        <span class="badge badge-live">Live · in production</span>
+      </div>
+      <p class="model-desc">A <strong>LightGBM</strong> binary classifier predicting high-risk vs. lower-risk from the full 13-field vitals vector (age, SpO2, heart rate, resp rate, both BP readings, temp, pain score, and five history flags). Its probability output becomes a 0–100% risk score, which a set of tiered thresholds turns into a disposition, a monitoring cadence, and an estimated length of stay.</p>
+      <div class="model-meta">
+        <div class="model-meta-item"><div class="k">Type</div><div class="v">Binary classifier</div></div>
+        <div class="model-meta-item"><div class="k">Inputs</div><div class="v">13 features</div></div>
+        <div class="model-meta-item"><div class="k">Output</div><div class="v">Risk % → care plan</div></div>
+        <div class="model-meta-item"><div class="k">Trained on</div><div class="v">Pre-existing dataset</div></div>
+      </div>
+    </div>
+
+    <div class="model-card">
+      <div class="model-head">
+        <span class="model-name">Severity model</span>
+        <span class="badge badge-demo">Demo · synthetic data</span>
+      </div>
+      <p class="model-desc">An <strong>XGBoost</strong> 5-class severity classifier, built to show the training pipeline works end-to-end even without a real dataset on hand. <code style="font-family:var(--font-mono); font-size:0.85em;">train_xgboost.py</code> seeds a local SQLite database with synthetic vitals and independently-random acuity labels — so this model is honest infrastructure, not a clinical signal, and it's deliberately not wired into the UI.</p>
+      <div class="model-meta">
+        <div class="model-meta-item"><div class="k">Type</div><div class="v">5-class classifier</div></div>
+        <div class="model-meta-item"><div class="k">Trained on</div><div class="v">Synthetic, unlabeled-real</div></div>
+        <div class="model-meta-item"><div class="k">Accuracy</div><div class="v">~28% (no real signal)</div></div>
+        <div class="model-meta-item"><div class="k">Status</div><div class="v">Backend only</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="api">
+    <div class="section-head"><span class="section-num">06</span><h2>API at a glance</h2></div>
+    <p class="lede">One endpoint does the real work; everything else is a health check.</p>
+    <div class="code-block">
+      <div class="code-head"><span><span class="method">POST</span> /analyze-vitals</span><span>200 OK</span></div>
+      <pre><span class="tok-muted">{</span>
+  <span class="tok-key">"triage_severity_level"</span>: <span class="tok-num">4</span>,
+  <span class="tok-key">"disease_probabilities"</span>: <span class="tok-muted">{</span> <span class="tok-key">"Sepsis"</span>: <span class="tok-num">0.30</span>, <span class="tok-key">"Cardiac Event"</span>: <span class="tok-num">0.29</span>, ... <span class="tok-muted">}</span>,
+  <span class="tok-key">"risk_assessment"</span>: <span class="tok-muted">{</span>
+    <span class="tok-key">"risk_score"</span>: <span class="tok-num">47.0</span>,
+    <span class="tok-key">"disposition"</span>: <span class="tok-str">"Observation"</span>,
+    <span class="tok-key">"monitoring"</span>: <span class="tok-str">"Every 4 hours"</span>,
+    <span class="tok-key">"estimated_stay"</span>: <span class="tok-str">"12-24 hours observation"</span>
+  <span class="tok-muted">}</span>,
+  <span class="tok-key">"severity_assessment_ml"</span>: <span class="tok-muted">{</span> <span class="tok-key">"is_demo"</span>: <span class="tok-num">true</span>, ... <span class="tok-muted">}</span>
+<span class="tok-muted">}</span></pre>
+    </div>
+  </section>
+
+  <section id="screens">
+    <div class="section-head"><span class="section-num">07</span><h2>The two screens</h2></div>
+    <p class="lede">Triage board for intake, Diagnosis &amp; outlook for the read — built around what's actually there.</p>
+    <div class="mock-wrap">
+      <div class="mock-frame">
+        <div class="mock-titlebar">Triage board</div>
+        <div class="mock-body">
+          <div class="mock-acuity-row">
+            <div class="mock-acuity-cell"><div class="mock-acuity-num" style="color:#ff3b30;">5</div><div class="mock-acuity-label">L5</div></div>
+            <div class="mock-acuity-cell"><div class="mock-acuity-num" style="color:#ff3b30;">4</div><div class="mock-acuity-label">L4</div></div>
+            <div class="mock-acuity-cell"><div class="mock-acuity-num">3</div><div class="mock-acuity-label">L3</div></div>
+            <div class="mock-acuity-cell"><div class="mock-acuity-num">2</div><div class="mock-acuity-label">L2</div></div>
+            <div class="mock-acuity-cell"><div class="mock-acuity-num">1</div><div class="mock-acuity-label">L1</div></div>
+          </div>
+          <div class="mock-row"><span>PAT-1082</span><span class="v">SpO2 88%</span></div>
+          <div class="mock-row"><span>PAT-1088</span><span class="v">HR 109 bpm</span></div>
+          <div class="mock-row"><span>PAT-1079</span><span class="v">BP 158/95</span></div>
+        </div>
+      </div>
+      <div class="mock-frame">
+        <div class="mock-titlebar">Diagnosis &amp; outlook</div>
+        <div class="mock-body">
+          <div class="mock-hero">
+            <div class="mock-hero-label">Predicted Diagnosis</div>
+            <div class="mock-hero-disease">Sepsis</div>
+            <div class="mock-hero-conf">30.0% model confidence</div>
+          </div>
+          <div class="mock-bar-row">
+            <div class="mock-bar-label"><span>Sepsis</span><span>30%</span></div>
+            <div class="mock-bar-track"><div class="mock-bar-fill top" style="width:30%;"></div></div>
+          </div>
+          <div class="mock-bar-row">
+            <div class="mock-bar-label"><span>Cardiac Event</span><span>29%</span></div>
+            <div class="mock-bar-track"><div class="mock-bar-fill" style="width:29%;"></div></div>
+          </div>
+          <div class="mock-bar-row">
+            <div class="mock-bar-label"><span>Respiratory Infection</span><span>24%</span></div>
+            <div class="mock-bar-track"><div class="mock-bar-fill" style="width:24%;"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>MedVision Guard — AI-powered clinical decision support &amp; ER triage</span>
+    <span>Not a diagnosis. A clinician makes the final call.</span>
+  </footer>
+
+</main>
+</div>
