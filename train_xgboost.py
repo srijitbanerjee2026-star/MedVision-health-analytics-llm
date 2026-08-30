@@ -1,106 +1,140 @@
-import os
-import sqlite3
-
+import mysql.connector
 import numpy as np
 import xgboost as xgb
-from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import classification_report
+import os
+import re
+import joblib
 
-MODEL_FILE = "severity_model.json"
-DB_FILE = "medvision_guard.db"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_FILE = os.path.join(SCRIPT_DIR, "severity_model.json")
+MODEL_PICKLE_FILE = os.path.join(SCRIPT_DIR, "severity_model.pkl")
+SQL_FILE = os.path.join(SCRIPT_DIR, "medvision_full.sql")
 
-FEATURE_COLS = [
-    "age", "spo2", "heart_rate", "resp_rate", "sys_bp", "dias_bp", "temp",
-    "pain_score", "hist_asthma", "hist_diabetes", "hist_hypertension",
-    "hist_cad", "hist_stroke",
-]
+MYSQL_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": os.environ["MYSQL_PASSWORD"],
+}
 
+def seed_database_from_sql():
+    if not os.path.exists(SQL_FILE):
+        raise FileNotFoundError(f"Cannot find '{SQL_FILE}' in project root.")
 
-def init_sqlite_db(conn: sqlite3.Connection) -> None:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS patient_records (
-            patient_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            age INTEGER, spo2 REAL, heart_rate REAL, resp_rate REAL,
-            sys_bp REAL, dias_bp REAL, temp REAL, pain_score INTEGER,
-            hist_asthma INTEGER, hist_diabetes INTEGER, hist_hypertension INTEGER,
-            hist_cad INTEGER, hist_stroke INTEGER, target_triage_acuity INTEGER
-        );
-    """)
-    conn.commit()
-
-
-def seed_if_empty(conn: sqlite3.Connection, num_records: int = 500) -> None:
-    """Generates synthetic patient records with the same distributions as
-    New/seed_db.py — no external dataset or MySQL server required. Only runs
-    once; leaves real data alone if the table is already populated."""
-    (count,) = conn.execute("SELECT COUNT(*) FROM patient_records").fetchone()
-    if count > 0:
-        print(f"[INFO] patient_records already has {count} rows — skipping seed.")
-        return
-
-    print(f"[INFO] Seeding {num_records} synthetic patient records into '{DB_FILE}'...")
-    rng = np.random.default_rng(42)
-
-    spo2 = np.clip(np.round(rng.normal(96, 3, num_records), 1), 70, 100)
-    rows = list(zip(
-        rng.integers(18, 90, num_records).tolist(),
-        spo2.tolist(),
-        np.round(rng.normal(78, 15, num_records), 1).tolist(),
-        np.round(rng.normal(18, 4, num_records), 1).tolist(),
-        np.round(rng.normal(122, 18, num_records), 1).tolist(),
-        np.round(rng.normal(78, 12, num_records), 1).tolist(),
-        np.round(rng.normal(37.0, 0.8, num_records), 1).tolist(),
-        rng.integers(0, 11, num_records).tolist(),
-        rng.choice([0, 1], num_records, p=[0.85, 0.15]).tolist(),
-        rng.choice([0, 1], num_records, p=[0.75, 0.25]).tolist(),
-        rng.choice([0, 1], num_records, p=[0.60, 0.40]).tolist(),
-        rng.choice([0, 1], num_records, p=[0.85, 0.15]).tolist(),
-        rng.choice([0, 1], num_records, p=[0.92, 0.08]).tolist(),
-        rng.choice([1, 2, 3, 4, 5], num_records, p=[0.1, 0.2, 0.4, 0.2, 0.1]).tolist(),
-    ))
-
-    conn.executemany(
-        f"""INSERT INTO patient_records ({', '.join(FEATURE_COLS)}, target_triage_acuity)
-            VALUES ({', '.join(['?'] * (len(FEATURE_COLS) + 1))})""",
-        rows,
-    )
-    conn.commit()
-    print(f"✅ Seeded {num_records} synthetic patient records.")
-
-
-def load_data_from_sqlite() -> tuple[np.ndarray, np.ndarray]:
-    conn = sqlite3.connect(DB_FILE)
+    print("[INFO] Connecting to local MySQL server...")
     try:
-        init_sqlite_db(conn)
-        seed_if_empty(conn)
-        rows = conn.execute(
-            f"SELECT {', '.join(FEATURE_COLS)}, target_triage_acuity FROM patient_records"
-        ).fetchall()
-    finally:
-        conn.close()
+        conn = mysql.connector.connect(**MYSQL_CONFIG)
+        cursor = conn.cursor()
+    except mysql.connector.Error as err:
+        raise ConnectionError(f"MySQL connection failed: {err}")
+
+    print(f"[INFO] Reading and executing '{SQL_FILE}' to build 'medvision' database...")
+    with open(SQL_FILE, "r", encoding="utf-8") as f:
+        sql_content = f.read()
+
+    # multi=True delegates statement splitting to mysql-connector's own SQL
+    # parser, which correctly handles semicolons inside string literals,
+    # comments, and stored procedures — a naive str.split(";") would corrupt
+    # any dump file containing those.
+    statements = cursor.execute(sql_content, multi=True)
+    while True:
+        try:
+            result = next(statements)
+        except StopIteration:
+            break
+        except mysql.connector.Error as err:
+            if err.errno in (1007, 1050):
+                continue  # database/table already exists — safe to ignore
+            conn.rollback()
+            conn.close()
+            raise RuntimeError(f"Failed executing SQL from '{SQL_FILE}': {err}") from err
+        if result.with_rows:
+            result.fetchall()
+
+    conn.commit()
+    conn.close()
+    print("✅ Database 'medvision' and table 'patient_records' ready!")
+
+def load_data_from_mysql():
+
+    config_with_db = MYSQL_CONFIG.copy()
+    config_with_db["database"] = "medvision"
+
+    conn = mysql.connector.connect(**config_with_db)
+    cursor = conn.cursor(dictionary=True)
+
+    query = """
+        SELECT age, spo2, heart_rate, resp_rate, sys_bp, dias_bp, temp, pain_score,
+               hist_asthma, hist_diabetes, hist_hypertension, hist_cad, hist_stroke,
+               target_triage_acuity
+        FROM patient_records
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
 
     if not rows:
-        raise ValueError(f"'{DB_FILE}' table 'patient_records' is empty!")
+        raise ValueError("MySQL table 'patient_records' is empty!")
 
-    X_list, y_list = [], []
+    FEATURE_DEFAULTS = {
+        "age": 45, "spo2": 95, "heart_rate": 75, "resp_rate": 16, "sys_bp": 120,
+        "dias_bp": 80, "temp": 37.0, "pain_score": 0, "hist_asthma": 0,
+        "hist_diabetes": 0, "hist_hypertension": 0, "hist_cad": 0, "hist_stroke": 0,
+    }
+
+    X_list = []
+    y_list = []
+    null_counts = {col: 0 for col in FEATURE_DEFAULTS}
+
     for row in rows:
-        *features, raw_acuity = row
-        X_list.append([float(v) if v is not None else 0.0 for v in features])
-        y_list.append(6 - int(raw_acuity))
+        feature_vector = []
+        for col, default in FEATURE_DEFAULTS.items():
+            value = row[col]
+            if value is None:
+                null_counts[col] += 1
+                value = default
+            feature_vector.append(float(value))
+
+        X_list.append(feature_vector)
+        raw_acuity = int(row['target_triage_acuity'])
+        inverted_acuity = 6 - raw_acuity
+
+        y_list.append(inverted_acuity)
+
+    total_nulls = sum(null_counts.values())
+    if total_nulls:
+        print(f"[WARN] Substituted defaults for {total_nulls} missing value(s) across {len(rows)} rows:")
+        for col, count in null_counts.items():
+            if count:
+                print(f"[WARN]   {col}: {count} missing ({count / len(rows):.1%} of rows)")
 
     X = np.array(X_list, dtype=np.float32)
     y_raw = np.array(y_list, dtype=np.int32)
+
     return X, y_raw
 
-
 def train_xgboost_model():
-    X, y_raw = load_data_from_sqlite()
+    X, y_raw = load_data_from_mysql()
     print(f"[INFO] Successfully loaded {X.shape[0]} rows with {X.shape[1]} features.")
 
     le = LabelEncoder()
     y = le.fit_transform(y_raw)
     num_classes = len(np.unique(y))
+
+    # app.py recovers the 1-5 severity scale as `predicted_class + 1`, which
+    # only holds if every acuity level 1-5 is present so LabelEncoder maps
+    # them to contiguous indices 0-4 in order. If any level is missing from
+    # the data, that mapping silently shifts and every prediction downstream
+    # is mislabeled by one or more severity levels with no error raised.
+    expected_classes = np.array([1, 2, 3, 4, 5])
+    if not np.array_equal(le.classes_, expected_classes):
+        raise ValueError(
+            f"Expected all 5 acuity levels {expected_classes.tolist()} in the training "
+            f"data, but found only {le.classes_.tolist()}. Fix the data before training — "
+            "app.py's class-index-to-severity mapping assumes all 5 are present."
+        )
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
@@ -124,7 +158,7 @@ def train_xgboost_model():
 
     model.save_model(MODEL_FILE)
     print(f"✅ XGBoost model trained successfully and saved to '{MODEL_FILE}'!")
-
-
+    joblib.dump(model, MODEL_PICKLE_FILE)
+    print("✅ Trained model saved successfully to 'severity_model.pkl'!")
 if __name__ == "__main__":
     train_xgboost_model()
