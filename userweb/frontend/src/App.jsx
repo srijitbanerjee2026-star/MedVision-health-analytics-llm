@@ -20,11 +20,13 @@ function vitalClass(value, low, high) {
 function SeverityRing({ level, color, size = 110 }) {
   const clamped = Math.max(0, Math.min(5, level || 0));
   const offset = RING_CIRCUMFERENCE * (1 - clamped / 5);
+  const critical = level === 5;
   return (
     <div className="mvg-ring" style={{ width: size, height: size }}>
       <svg viewBox="0 0 100 100">
         <circle cx="50" cy="50" r={RING_RADIUS} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="7" />
         <circle
+          key={level}
           cx="50"
           cy="50"
           r={RING_RADIUS}
@@ -33,8 +35,12 @@ function SeverityRing({ level, color, size = 110 }) {
           strokeWidth="7"
           strokeLinecap="butt"
           strokeDasharray={RING_CIRCUMFERENCE.toFixed(2)}
-          strokeDashoffset={offset.toFixed(2)}
           transform="rotate(-90 50 50)"
+          className={critical ? "mvg-ring-anim-critical" : "mvg-ring-anim"}
+          style={{
+            "--mvg-ring-circumference": `${RING_CIRCUMFERENCE.toFixed(2)}`,
+            "--mvg-ring-offset": `${offset.toFixed(2)}`,
+          }}
         />
       </svg>
       <div className="mvg-ring-num" style={{ color }}>
@@ -200,7 +206,10 @@ export default function App() {
           <p className="mvg-subtitle">AI-powered clinical decision support &amp; ER triage</p>
         </div>
         <div className="mvg-badge">
-          <span className="mvg-dot" style={{ background: healthy ? "#3fb950" : "#ff3b30" }} />
+          <span
+            className={`mvg-dot${healthy ? " mvg-dot-online" : ""}`}
+            style={{ background: healthy ? "#3fb950" : "#ff3b30" }}
+          />
           {healthy ? "SYSTEM ONLINE" : "SYSTEM UNREACHABLE"}
         </div>
       </div>
@@ -434,7 +443,7 @@ export default function App() {
                   {rankedDiseases.length === 0 ? (
                     <p className="mvg-muted-text">No probability data returned.</p>
                   ) : (
-                    rankedDiseases.map(([name, prob]) => {
+                    rankedDiseases.map(([name, prob], i) => {
                       const isTop = name === topDisease;
                       const pct = Math.min(Math.max(prob, 0), 1) * 100;
                       return (
@@ -448,8 +457,13 @@ export default function App() {
                           </div>
                           <div className="mvg-prob-track">
                             <div
+                              key={`${name}-${pct.toFixed(1)}`}
                               className={`mvg-prob-fill${isTop ? " top" : ""}`}
-                              style={{ width: `${pct.toFixed(1)}%` }}
+                              style={{
+                                "--mvg-bar-target": `${pct.toFixed(1)}%`,
+                                width: `${pct.toFixed(1)}%`,
+                                animationDelay: `${i * 90}ms`,
+                              }}
                             />
                           </div>
                           <div className="mvg-prob-desc">{DISEASE_INFO[name] || ""}</div>

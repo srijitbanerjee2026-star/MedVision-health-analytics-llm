@@ -12,6 +12,63 @@
   box-sizing: border-box;
 }
 
+@keyframes mvg-ring-fill {
+  from {
+    stroke-dashoffset: var(--mvg-ring-circumference);
+  }
+  to {
+    stroke-dashoffset: var(--mvg-ring-offset);
+  }
+}
+
+@keyframes mvg-crit-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+@keyframes mvg-bar-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: var(--mvg-bar-target);
+  }
+}
+
+@keyframes mvg-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes mvg-card-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mvg-ring-anim,
+  .mvg-ring-anim-critical,
+  .mvg-dot,
+  .mvg-tab-panel,
+  .mvg-prob-fill {
+    animation: none !important;
+  }
+}
+
 html,
 body,
 #root {
@@ -72,6 +129,14 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+}
+
+.mvg-dot-online {
+  animation: mvg-breathe 2.2s ease-in-out infinite;
+}
+
+.mvg-tab-panel {
+  animation: mvg-card-in 0.2s ease both;
 }
 
 .mvg-warning {
@@ -278,6 +343,14 @@ textarea {
   font-weight: 800;
 }
 
+.mvg-ring-anim {
+  animation: mvg-ring-fill 0.6s ease-out both;
+}
+
+.mvg-ring-anim-critical {
+  animation: mvg-ring-fill 0.6s ease-out both, mvg-crit-pulse 1.4s ease-in-out infinite;
+}
+
 .mvg-severity-info {
   display: flex;
   flex-direction: column;
@@ -373,7 +446,7 @@ textarea {
 .mvg-prob-fill {
   height: 100%;
   background: var(--mvg-muted);
-  transition: width 0.4s ease-out;
+  animation: mvg-bar-fill 0.5s ease-out both;
 }
 
 .mvg-prob-fill.top {
