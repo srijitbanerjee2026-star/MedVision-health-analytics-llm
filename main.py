@@ -5,10 +5,10 @@ import joblib
 import xgboost as xgb
 import numpy as np
 import hashlib
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -129,14 +129,9 @@ class HealthConsensusEngine:
                     probs = torch.nn.functional.softmax(logits, dim=-1)
                     conf_tensor, pred = torch.max(probs, dim=-1)
                 conf = round(float(conf_tensor.item()), 4)
-                # Only trust DistilBERT when it's sufficiently confident.
-                # Below 0.50 the model is uncertain (often happens with
-                # checkpoints trained on limited data) — fall through to
-                # the keyword heuristics which are more reliable.
                 if conf >= 0.50:
                     condition = self.label_encoder.inverse_transform([pred.item()])[0]
                     return condition, conf, subsystem
-                # Low confidence — annotate and fall through
                 print(f"[INFO] DistilBERT conf={conf:.3f} < 0.50, using keyword fallback.")
             except Exception as e:
                 print(f"[WARN] DistilBERT inference failed: {e}")
@@ -157,26 +152,21 @@ class HealthConsensusEngine:
 
     # ── Tabular predictions ───────────────────────────────────────────────────
     def predict_tabular_metrics(self, vitals: Dict[str, Any]) -> Tuple[int, float, float]:
-        """Returns (esi_level, los_days, icu_risk).
-
-        Feature vector matches exactly the 13 columns both models were trained on:
-          [age, spo2, heart_rate, resp_rate, sys_bp, dias_bp, temp, pain_score,
-           hist_asthma, hist_diabetes, hist_hypertension, hist_cad, hist_stroke]
-        """
+        """Returns (esi_level, los_days, icu_risk)."""
         feature_vector = np.array([[
-            float(vitals.get("age",              45)),
-            float(vitals.get("spo2",             98.0)),
-            float(vitals.get("heart_rate",       75.0)),
-            float(vitals.get("resp_rate",        16.0)),   # new field
-            float(vitals.get("sys_bp",           120.0)),
-            float(vitals.get("dias_bp",          80.0)),
-            float(vitals.get("temperature",      37.0)),   # mapped from "temperature" → "temp"
-            float(vitals.get("pain_score",       3)),
-            float(vitals.get("hist_asthma",      0)),      # new field
-            float(vitals.get("hist_diabetes",    0)),      # new field
-            float(vitals.get("hist_hypertension",0)),      # new field
-            float(vitals.get("hist_cad",         0)),      # new field
-            float(vitals.get("hist_stroke",      0)),      # new field
+            float(vitals.get("age",               45)),
+            float(vitals.get("spo2",              98.0)),
+            float(vitals.get("heart_rate",        75.0)),
+            float(vitals.get("resp_rate",         16.0)),
+            float(vitals.get("sys_bp",            120.0)),
+            float(vitals.get("dias_bp",           80.0)),
+            float(vitals.get("temperature",       37.0)),
+            float(vitals.get("pain_score",        3)),
+            float(vitals.get("hist_asthma",       0)),
+            float(vitals.get("hist_diabetes",     0)),
+            float(vitals.get("hist_hypertension", 0)),
+            float(vitals.get("hist_cad",          0)),
+            float(vitals.get("hist_stroke",       0)),
         ]], dtype=np.float32)
 
         spo2     = feature_vector[0][1]
@@ -184,19 +174,15 @@ class HealthConsensusEngine:
         pain     = feature_vector[0][7]
 
         # ── ESI level via XGBoost ─────────────────────────────────────────────
-        # train_xgboost.py stores ESI as (6 - acuity), so class 0 = acuity 5
-        # (non-urgent) and class 4 = acuity 1 (immediate). We reverse here.
         esi_level = None
         if self.xgb_model is not None:
             try:
                 raw_class = int(self.xgb_model.predict(feature_vector)[0])
-                # raw_class is 0-indexed in ascending severity; invert to ESI 1-5
                 esi_level = max(1, min(5, 5 - raw_class))
             except Exception as e:
                 print(f"[WARN] XGBoost predict failed: {e}")
 
         if esi_level is None:
-            # Simple rule-based fallback
             if spo2 < 90 or sys_bp < 90:
                 esi_level = 1
             elif pain >= 8:
@@ -205,8 +191,6 @@ class HealthConsensusEngine:
                 esi_level = 3
 
         # ── ICU risk via LightGBM ─────────────────────────────────────────────
-        # risk_model.pkl is a binary classifier: predict_proba()[:, 1] gives
-        # P(high-risk) already in [0, 1].
         icu_risk = None
         if self.lgb_model is not None:
             try:
@@ -217,7 +201,7 @@ class HealthConsensusEngine:
         if icu_risk is None:
             icu_risk = 0.88 if (spo2 < 90 and sys_bp < 90) else 0.12
 
-        # ── Length of stay (derived from ESI, not a separate model) ───────────
+        # ── Length of stay (derived from ESI) ─────────────────────────────────
         los_map = {1: 6.0, 2: 4.0, 3: 2.5, 4: 1.5, 5: 0.5}
         los_days = los_map.get(esi_level, 2.5)
 
@@ -228,9 +212,15 @@ class HealthConsensusEngine:
 engine = HealthConsensusEngine()
 
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception:
+    if SUPABASE_URL and not SUPABASE_URL.startswith("https://your-supabase-project"):
+        supabase: Optional[Client] = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("[OK] Supabase client connected successfully.")
+    else:
+        supabase = None
+        print("[WARN] Supabase placeholder credentials detected. DB persistence disabled.")
+except Exception as e:
     supabase = None
+    print(f"[WARN] Failed to connect to Supabase: {e}")
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -241,8 +231,6 @@ class ComplaintPayload(BaseModel):
 class TriagePayload(BaseModel):
     patient_id: str
     chief_complaint_text: str
-    # dynamic_vitals accepts the original 7-key payload AND the new 13-key
-    # payload — new fields default inside predict_tabular_metrics if absent.
     dynamic_vitals: dict
 
 
@@ -256,6 +244,7 @@ def read_root():
             "xgboost": engine.xgb_model is not None,
             "lightgbm": engine.lgb_model is not None,
         },
+        "supabase_connected": supabase is not None,
     }
 
 
@@ -265,8 +254,8 @@ async def analyze_complaint(payload: ComplaintPayload):
     required_vitals = [
         "age", "heart_rate", "sys_bp", "dias_bp",
         "spo2", "temperature", "pain_score",
-        "resp_rate",                         # added
-        "hist_asthma", "hist_diabetes",      # optional history fields
+        "resp_rate",
+        "hist_asthma", "hist_diabetes",
         "hist_hypertension", "hist_cad", "hist_stroke",
     ]
     return {"subsystem": subsystem, "required_vitals": required_vitals}
@@ -297,17 +286,18 @@ async def evaluate_triage(payload: TriagePayload):
         )
         patient_hash = engine.hash_patient_id(payload.patient_id)
 
+        # Database Logging via Supabase
         if supabase:
             try:
                 supabase.table("master_patient_triage").insert({
-                    "patient_id":       payload.patient_id,
+                    "patient_id":       patient_hash,
                     "chief_complaint":  payload.chief_complaint_text,
                     "vitals_json":      json.dumps(payload.dynamic_vitals),
                     "esi_predicted":    esi_level,
                     "patient_hash":     patient_hash,
                 }).execute()
-            except Exception:
-                pass
+            except Exception as db_err:
+                print(f"[WARN] Supabase write failed: {db_err}")
 
         return {
             "status":         "success",
@@ -331,6 +321,48 @@ async def evaluate_triage(payload: TriagePayload):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── New Supabase Retrieval Endpoints for Frontend / Claude Code ───────────────
+@app.get("/api/patient/records")
+async def get_all_records(limit: int = Query(50, ge=1, le=200)):
+    """Fetches recent triage audit records for the frontend dashboard."""
+    if not supabase:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase client not connected. Ensure SUPABASE_URL and SUPABASE_KEY are configured in .env"
+        )
+    try:
+        response = (
+            supabase.table("master_patient_triage")
+            .select("*")
+            .limit(limit)
+            .execute()
+        )
+        return {"status": "success", "count": len(response.data), "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch records: {str(e)}")
+
+
+@app.get("/api/patient/records/{patient_id}")
+async def get_patient_history(patient_id: str):
+    """Fetches historical triage records for a specific patient."""
+    if not supabase:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase client not connected. Ensure SUPABASE_URL and SUPABASE_KEY are configured in .env"
+        )
+    try:
+        p_hash = engine.hash_patient_id(patient_id)
+        response = (
+            supabase.table("master_patient_triage")
+            .select("*")
+            .or_(f"patient_id.eq.{patient_id},patient_hash.eq.{p_hash}")
+            .execute()
+        )
+        return {"status": "success", "data": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch patient history: {str(e)}")
 
 
 if __name__ == "__main__":
