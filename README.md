@@ -72,3 +72,45 @@ MedVision operates on a hybrid data pipeline architecture split into Offline Tra
    ```bash
    git clone [https://github.com/your-username/medvision.git](https://github.com/your-username/medvision.git)
    cd medvision
+   ```
+
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate      # Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. (Optional) Configure Supabase persistence. Without this, the backend still
+   runs fine — it detects placeholder credentials and disables persistence,
+   logging a warning instead of failing. Create a `.env` file in the repo
+   root:
+   ```bash
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_KEY=your-anon-or-service-key
+   ```
+
+5. Run the backend:
+   ```bash
+   uvicorn main:app --reload --port 8000
+   ```
+   The API will be available at `http://127.0.0.1:8000`. Model paths default
+   to `./models/severity_model.json` and `./models/risk_model.pkl` (already
+   committed to the repo); override with `SEVERITY_MODEL_PATH` /
+   `RISK_MODEL_PATH` env vars if needed.
+
+### Frontend Installation
+
+See [userweb/README.md](userweb/README.md) for frontend setup — in short:
+```bash
+cd userweb/frontend
+npm install
+npm run dev
+```
+By default the frontend talks to the backend at `http://127.0.0.1:8000`;
+override with a `VITE_BACKEND_URL` env var (e.g. in `userweb/frontend/.env`)
+if your backend runs elsewhere.
