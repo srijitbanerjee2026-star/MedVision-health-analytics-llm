@@ -5,3 +5,6 @@ medvision_guard.db
 .env.*
 *.csv
 *.sql
+
+.vercel
+.env*
